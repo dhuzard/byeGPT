@@ -351,7 +351,7 @@ def write_split_files(
             safe_name = folder_key.replace(os.sep, "_").replace("/", "_").lower()
             if safe_name == ".": safe_name = "part"
             
-            file_path = state["dir"] / f"history_{safe_name}_{state["file_idx"]}.md"
+            file_path = state["dir"] / f"history_{safe_name}_{state['file_idx']}.md"
             file_path.write_text(state["current_content"], encoding="utf-8")
             created_files.append(file_path)
             state["file_idx"] += 1
@@ -366,7 +366,7 @@ def write_split_files(
             safe_name = folder_key.replace(os.sep, "_").replace("/", "_").lower()
             if safe_name == ".": safe_name = "part"
             
-            file_path = state["dir"] / f"history_{safe_name}_{state["file_idx"]}.md"
+            file_path = state["dir"] / f"history_{safe_name}_{state['file_idx']}.md"
             file_path.write_text(state["current_content"], encoding="utf-8")
             created_files.append(file_path)
 
@@ -377,22 +377,34 @@ def write_split_files(
     return created_files
 
 
-    brain_map_path.write_text("\n".join(root_lines), encoding="utf-8")
-
-
 def _generate_mocs(output_dir: Path, folder_state: dict[str, dict[str, Any]]) -> None:
     """
     Generate Map of Content (MOC) files for Obsidian.
-    Creates a _map.md in each folder and a 00_Brain_Map.md at the root.
+    Creates a [Topic]_Map.md in each folder and a 00_Brain_Map.md at the root.
     """
-    # 1. Generate _map.md for each folder that contains files
+    def get_moc_name(folder_name: str) -> str:
+        if not folder_name or folder_name == ".":
+            return "Root_Map.md"
+        # Sanitize for filename
+        return f"{folder_name.replace(os.sep, '_').replace('/', '_')}_Map.md"
+
+    # 1. Generate descriptive MOCs for each folder that contains files
     for folder_key, state in folder_state.items():
         folder_dir = state["dir"]
-        # Find all .md files in this folder (excluding _map.md itself)
-        md_files = sorted([f for f in folder_dir.glob("*.md") if f.name not in ("_map.md", "00_Brain_Map.md")])
+        folder_name = folder_dir.name if folder_key != "." else "Root"
+        current_moc_name = get_moc_name(folder_name)
         
-        # Also find subdirectories that have their own _map.md
-        subdirs = sorted([d for d in folder_dir.iterdir() if d.is_dir() and (d / "_map.md").exists()])
+        # Find all .md files in this folder (excluding any MOC files)
+        md_files = sorted([
+            f for f in folder_dir.glob("*.md") 
+            if not f.name.endswith("_Map.md") and f.name != "00_Brain_Map.md"
+        ])
+        
+        # Find subdirectories that have their own *_Map.md
+        subdirs = sorted([
+            d for d in folder_dir.iterdir() 
+            if d.is_dir() and any(d.glob("*_Map.md"))
+        ])
 
         if not md_files and not subdirs:
             continue
@@ -404,7 +416,8 @@ def _generate_mocs(output_dir: Path, folder_state: dict[str, dict[str, Any]]) ->
         if subdirs:
             toc_lines.append("## Subcategories\n")
             for sd in subdirs:
-                toc_lines.append(f"- [[{sd.name}/_map|{sd.name}]]")
+                sd_moc = get_moc_name(sd.name)
+                toc_lines.append(f"- [[{sd.name}/{sd_moc}|{sd.name}]]")
             toc_lines.append("")
 
         if md_files:
@@ -412,25 +425,31 @@ def _generate_mocs(output_dir: Path, folder_state: dict[str, dict[str, Any]]) ->
             for f in md_files:
                 toc_lines.append(f"- [[{f.name}|{f.stem}]]")
         
-        map_path = folder_dir / "_map.md"
+        map_path = folder_dir / current_moc_name
         map_path.write_text("\n".join(toc_lines), encoding="utf-8")
 
     # 2. Add MOCs for parent directories that might not have files but have subdirectories
-    # We do a second pass to catch these
     for folder in output_dir.rglob("*"):
-        if folder.is_dir() and not (folder / "_map.md").exists():
-            sub_mocs = list(folder.glob("*/_map.md"))
-            if sub_mocs:
+        if not folder.is_dir():
+            continue
+            
+        moc_name = get_moc_name(folder.name if folder != output_dir else "Root")
+        if not (folder / moc_name).exists():
+            sub_mocs = list(folder.glob("*/ *_Map.md")) # This pattern is slightly wrong, fixing below
+            # Let's just find any subfolder that has a MOC
+            subdirs_with_mocs = [d for d in folder.iterdir() if d.is_dir() and any(d.glob("*_Map.md"))]
+            
+            if subdirs_with_mocs:
                 rel_path = folder.relative_to(output_dir)
-                title = str(rel_path).replace(os.path.sep, " / ")
+                title = str(rel_path).replace(os.path.sep, " / ") if str(rel_path) != "." else "Root"
                 toc_lines = [f"# Map of Content — {title}\n"]
                 toc_lines.append(f"Generated on {datetime.now().strftime('%Y-%m-%d')}\n")
                 toc_lines.append("## Subcategories\n")
-                for sm in sorted(sub_mocs):
-                    sd_name = sm.parent.name
-                    toc_lines.append(f"- [[{sd_name}/_map|{sd_name}]]")
+                for sd in sorted(subdirs_with_mocs):
+                    sd_moc = get_moc_name(sd.name)
+                    toc_lines.append(f"- [[{sd.name}/{sd_moc}|{sd.name}]]")
                 
-                (folder / "_map.md").write_text("\n".join(toc_lines), encoding="utf-8")
+                (folder / moc_name).write_text("\n".join(toc_lines), encoding="utf-8")
 
     # 3. Generate root 00_Brain_Map.md
     root_lines = ["# 🧠 My Memory Vault — Brain Map\n"]
@@ -438,16 +457,18 @@ def _generate_mocs(output_dir: Path, folder_state: dict[str, dict[str, Any]]) ->
     root_lines.append("## Categories\n")
 
     # Find all top-level MOCs
-    top_level_mocs = sorted(list(output_dir.glob("*/_map.md")))
-    for moc in top_level_mocs:
-        topic = moc.parent.name
-        root_lines.append(f"### [[{topic}/_map|{topic.capitalize()}]]")
-        
-        # Find sub-MOCs for this topic
-        sub_mocs = sorted(list(moc.parent.glob("*/_map.md")))
-        for sm in sub_mocs:
-            sub_name = sm.parent.name
-            root_lines.append(f"  - [[{topic}/{sub_name}/_map|{sub_name}]]")
+    top_level_subdirs = sorted([d for d in output_dir.iterdir() if d.is_dir()])
+    for topic_dir in top_level_subdirs:
+        topic_moc = get_moc_name(topic_dir.name)
+        if (topic_dir / topic_moc).exists():
+            root_lines.append(f"### [[{topic_dir.name}/{topic_moc}|{topic_dir.name.capitalize()}]]")
+            
+            # Find second-level MOCs
+            sub_dirs = sorted([d for d in topic_dir.iterdir() if d.is_dir()])
+            for sd in sub_dirs:
+                sd_moc = get_moc_name(sd.name)
+                if (sd / sd_moc).exists():
+                    root_lines.append(f"  - [[{topic_dir.name}/{sd.name}/{sd_moc}|{sd.name}]]")
 
     brain_map_path = output_dir / "00_Brain_Map.md"
     brain_map_path.write_text("\n".join(root_lines), encoding="utf-8")

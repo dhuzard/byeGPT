@@ -342,10 +342,23 @@ def index(
         "--db", "-d",
         help="Where to store the vector database index.",
     ),
+    limit: Optional[int] = typer.Option(
+        None,
+        "--limit", "-l",
+        help="Limit indexing to the first N files (useful for quick testing).",
+    ),
+    batch_size: int = typer.Option(
+        200,
+        "--batch-size", "-b",
+        help="How many conversations to batch before adding to the index.",
+    ),
 ) -> None:
     """
     Index your Markdown history for semantic search.
     Requires chromadb and sentence-transformers.
+    
+    [bold]Tip:[/bold] Point --input to a specific subfolder (e.g., --input ./gemini_history/Python)
+    to index only that topic.
     """
     console.print(
         Panel.fit(
@@ -371,7 +384,12 @@ def index(
             progress.update(task, completed=current, total=total)
 
         start_time = time.time()
-        indexer.index_directory(input_dir, progress_callback=update_progress)
+        indexer.index_directory(
+            input_dir, 
+            progress_callback=update_progress,
+            batch_size=batch_size,
+            limit=limit
+        )
         duration = time.time() - start_time
 
     console.print(f"\n[bold green]✅ Indexing complete![/bold green]")

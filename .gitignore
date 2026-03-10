@@ -20,6 +20,7 @@ env/
 
 # Project-specific — never commit user data
 conversations.json
+.byegpt/
 *.zip
 gemini_history/
 test_output/

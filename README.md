@@ -33,6 +33,9 @@ cd byegpt
 
 # Install (editable mode)
 pip install -e .
+
+# Install Intelligence Layer dependencies (recommended)
+pip install chromadb==0.4.15 sentence-transformers transformers
 ```
 
 ### 2. Export your ChatGPT data
@@ -111,6 +114,12 @@ byegpt index [OPTIONS]
 |---|---|---|
 | `--input`, `-i` | `./gemini_history` | Folder containing Markdown files to index |
 | `--db`, `-d` | `.byegpt/index` | Path to store the vector database index |
+| `--limit`, `-l` | `None` | Limit indexing to the first N files (for quick testing) |
+| `--batch-size`, `-b` | `200` | Number of conversations to batch per database addition |
+
+> [!TIP]
+> You can index a specific topic by pointing `--input` to a subfolder:
+> `byegpt index --input ./gemini_history/Python`
 
 ### `byegpt query`
 Perform a semantic search across your indexed history.

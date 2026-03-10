@@ -27,49 +27,60 @@ class VectorIndexer:
         )
         print("DEBUG: Collection ready")
 
-    def index_directory(self, input_dir: Path, progress_callback: Optional[Any] = None):
-        """Scan MD files, chunk them, and add to index."""
+    def index_directory(self, input_dir: Path, progress_callback: Optional[Any] = None, batch_size: int = 200, limit: Optional[int] = None):
+        """Scan MD files, chunk them, and add to index using batching."""
         md_files = list(input_dir.rglob("*.md"))
         # Exclude map files
         md_files = [f for f in md_files if f.name not in ("_map.md", "00_Brain_Map.md")]
         
+        # Apply limit if provided
+        if limit and limit > 0:
+            md_files = md_files[:limit]
+            
         total_files = len(md_files)
+        
+        batch_ids = []
+        batch_docs = []
+        batch_metas = []
+        
         for i, file_path in enumerate(md_files):
             content = file_path.read_text(encoding="utf-8")
-            self._index_file(file_path, content)
             
+            # Split file into conversation chunks
+            chunks = content.split("\n---\n")
+            
+            for idx, chunk in enumerate(chunks):
+                chunk = chunk.strip()
+                if not chunk or chunk == "---":
+                    continue
+                
+                chunk_id = f"{file_path.stem}_{idx}_{len(batch_ids)}" # Add len to avoid collisions in same batch
+                batch_ids.append(chunk_id)
+                batch_docs.append(chunk)
+                batch_metas.append({
+                    "source": str(file_path),
+                    "filename": file_path.name,
+                    "timestamp": datetime.datetime.now().isoformat()
+                })
+                
+                # If batch is full, add to collection
+                if len(batch_ids) >= batch_size:
+                    self.collection.add(
+                        ids=batch_ids,
+                        documents=batch_docs,
+                        metadatas=batch_metas
+                    )
+                    batch_ids, batch_docs, batch_metas = [], [], []
+
             if progress_callback:
                 progress_callback(i + 1, total_files)
-
-    def _index_file(self, file_path: Path, content: str):
-        """Split file into conversation chunks and index each."""
-        # Simple chunking by the '---' separator we use in formatter.py
-        # Each '---' separates a full conversation in the big files
-        chunks = content.split("\n---\n")
         
-        ids = []
-        documents = []
-        metadatas = []
-        
-        for idx, chunk in enumerate(chunks):
-            chunk = chunk.strip()
-            if not chunk or chunk == "---":
-                continue
-            
-            chunk_id = f"{file_path.stem}_{idx}"
-            ids.append(chunk_id)
-            documents.append(chunk)
-            metadatas.append({
-                "source": str(file_path),
-                "filename": file_path.name,
-                "timestamp": datetime.datetime.now().isoformat()
-            })
-            
-        if ids:
+        # Final flush
+        if batch_ids:
             self.collection.add(
-                ids=ids,
-                documents=documents,
-                metadatas=metadatas
+                ids=batch_ids,
+                documents=batch_docs,
+                metadatas=batch_metas
             )
 
     def query(self, text: str, n_results: int = 5) -> List[dict[str, Any]]:
