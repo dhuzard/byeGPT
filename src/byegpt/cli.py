@@ -18,11 +18,12 @@ from rich import print as rprint
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
+from rich.prompt import Prompt
 
 from byegpt import __version__
 from byegpt.parser import load_conversations, extract_attachments
 from byegpt.formatter import write_split_files
-from byegpt.persona import generate_persona
+from byegpt.persona import generate_persona, extract_topics, extract_subtopics
 
 app = typer.Typer(
     name="byegpt",
@@ -108,6 +109,11 @@ def convert(
         "--no-attachments",
         help="Skip attachment extraction.",
     ),
+    organize: bool = typer.Option(
+        False,
+        "--organize",
+        help="Interactively select topics to organize conversations into subfolders.",
+    ),
 ) -> None:
     """
     Convert a ChatGPT export to Gemini-optimized Markdown files.
@@ -137,6 +143,59 @@ def convert(
         f"  ✅ Loaded [bold]{len(conversations):,}[/bold] conversations "
         f"in {load_time:.1f}s"
     )
+
+    # ── Interactive Topic + Subtopic Selection ───────────────────────
+    # topic_tree is None (flat mode) or a dict: {topic: [sub1, sub2, sub3]}
+    topic_tree: dict[str, list[str]] | None = None
+    if organize:
+        console.print("\n[bold cyan]🧠 Step 1 — Topic Analysis[/bold cyan]")
+        with console.status("Extracting top topics from your history..."):
+            top_topics = extract_topics(conversations, top_n=15)
+
+        if top_topics:
+            console.print("Here are the top topics from your conversations:\n")
+            for idx, (word, count) in enumerate(top_topics, 1):
+                console.print(f"  [bold]{idx:>2}.[/bold] [yellow]{word}[/yellow] ({count} convos)")
+
+            console.print("\n[dim]Enter the topics you want as folders (comma-separated).[/dim]")
+            console.print("[dim]Or type 'all' to use all of them. Press Enter to skip.[/dim]")
+
+            user_input = Prompt.ask("Topics to keep")
+
+            selected: list[str] = []
+            if user_input.strip().lower() == "all":
+                selected = [t[0] for t in top_topics]
+            elif user_input.strip():
+                selected = [t.strip().lower() for t in user_input.split(",") if t.strip()]
+
+            if selected:
+                # ── Step 2: Subtopic refinement ──────────────────────
+                console.print(f"\n[bold cyan]🔍 Step 2 — Subtopic Refinement[/bold cyan]")
+                with console.status("Analyzing subtopics for each selected topic..."):
+                    subtopics_map = extract_subtopics(conversations, selected, top_n=3)
+
+                topic_tree = {}
+                for topic in selected:
+                    subs = subtopics_map.get(topic, [])
+                    if subs:
+                        sub_display = ", ".join(f"[green]{w}[/green] ({c})" for w, c in subs)
+                        console.print(f"\n  📂 [bold yellow]{topic}[/bold yellow] → {sub_display}")
+                    else:
+                        console.print(f"\n  📂 [bold yellow]{topic}[/bold yellow] → [dim]no subtopics found[/dim]")
+                    topic_tree[topic] = [w for w, _ in subs]
+
+                console.print("\n[dim]Press Enter to confirm this structure, or type 'flat' for no subtopics.[/dim]")
+                confirm = Prompt.ask("Confirm", default="yes")
+
+                if confirm.strip().lower() == "flat":
+                    # Downgrade to flat topic folders (no subtopics)
+                    topic_tree = {t: [] for t in selected}
+                    console.print("  📂 Using flat topic folders (no subtopics).")
+                else:
+                    total_folders = sum(max(1, len(subs)) for subs in topic_tree.values()) + 1  # +1 for Uncategorized
+                    console.print(f"  ✅ Will organize into ~{total_folders} subfolders.")
+        else:
+            console.print("[yellow]Could not extract enough topics to organize.[/yellow]")
 
     # Extract attachments
     attachment_map: dict[str, str] = {}
@@ -177,6 +236,7 @@ def convert(
             attachment_map=attachment_map,
             include_thinking=not no_thinking,
             progress_callback=update_progress,
+            topic_tree=topic_tree,
         )
         convert_time = time.time() - start
 

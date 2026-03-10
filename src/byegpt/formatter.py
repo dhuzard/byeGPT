@@ -5,6 +5,7 @@ Gemini-optimized Markdown with frontmatter, callouts, and attachments.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -268,12 +269,14 @@ def write_split_files(
     attachment_map: dict[str, str] | None = None,
     include_thinking: bool = True,
     progress_callback: Any = None,
+    topic_tree: dict[str, list[str]] | None = None,
 ) -> list[Path]:
     """
     Convert all conversations to Markdown, splitting into files that
     respect the size limit (optimized for Gemini's context window).
 
-    Returns list of created file paths.
+    If `topic_tree` is provided, conversations will be organized into nested
+    folders (topic/subtopic). Returns list of created file paths.
     """
     if attachment_map is None:
         attachment_map = {}
@@ -283,30 +286,87 @@ def write_split_files(
 
     max_bytes = int(max_size_mb * 1024 * 1024)
     created_files: list[Path] = []
-    file_idx = 1
-    current_content = ""
+    
+    # State tracking per folder so size limits work independently
+    folder_state: dict[str, dict[str, Any]] = {}
 
     for i, conv in enumerate(conversations):
-        conv_md = format_conversation(conv, attachment_map, include_thinking)
-        conv_md += "\n---\n\n"  # Separator between conversations
+        # ── Routing Logic ──
+        target_path = Path(".")
+        title = (conv.get("title") or "").lower()
+        
+        if topic_tree:
+            matched_topic = None
+            matched_subtopic = None
+            
+            # Find top-level topic match
+            for topic in topic_tree.keys():
+                if topic.lower() in title:
+                    matched_topic = topic
+                    # Find subtopic match within that topic
+                    for sub in topic_tree[topic]:
+                        if sub.lower() in title:
+                            matched_subtopic = sub
+                            break
+                    break
+            
+            if matched_topic:
+                target_path = Path(matched_topic)
+                if matched_subtopic:
+                    target_path = target_path / matched_subtopic
+            else:
+                target_path = Path("Uncategorized")
+        
+        folder_key = str(target_path)
 
-        current_content += conv_md
+        # Initialize folder state if needed
+        if folder_key not in folder_state:
+            folder_dir = output_dir / target_path
+            folder_dir.mkdir(parents=True, exist_ok=True)
+            folder_state[folder_key] = {
+                "dir": folder_dir,
+                "current_content": "",
+                "file_idx": 1,
+                "depth": len(target_path.parts) if str(target_path) != "." else 0,
+            }
+            
+        state = folder_state[folder_key]
+        
+        # Adjust attachment paths based on folder depth
+        # For each level of depth, we add a '../'
+        local_att_map = attachment_map
+        if state["depth"] > 0:
+            prefix = "../" * state["depth"]
+            local_att_map = {k: f"{prefix}{v}" for k, v in attachment_map.items()}
 
-        # Check if we've exceeded the size limit
-        if len(current_content.encode("utf-8")) > max_bytes:
-            file_path = output_dir / f"history_part_{file_idx}.md"
-            file_path.write_text(current_content, encoding="utf-8")
+        conv_md = format_conversation(conv, local_att_map, include_thinking)
+        conv_md += "\n---\n\n"
+
+        state["current_content"] += conv_md
+
+        # Check size limit
+        if len(state["current_content"].encode("utf-8")) > max_bytes:
+            # File name includes part of the path to avoid collisions
+            safe_name = folder_key.replace(os.sep, "_").replace("/", "_").lower()
+            if safe_name == ".": safe_name = "part"
+            
+            file_path = state["dir"] / f"history_{safe_name}_{state["file_idx"]}.md"
+            file_path.write_text(state["current_content"], encoding="utf-8")
             created_files.append(file_path)
-            file_idx += 1
-            current_content = ""
+            state["file_idx"] += 1
+            state["current_content"] = ""
 
         if progress_callback:
             progress_callback(i + 1)
 
-    # Write remaining content
-    if current_content.strip():
-        file_path = output_dir / f"history_part_{file_idx}.md"
-        file_path.write_text(current_content, encoding="utf-8")
-        created_files.append(file_path)
+    # Final flush
+    for folder_key, state in folder_state.items():
+        if state["current_content"].strip():
+            safe_name = folder_key.replace(os.sep, "_").replace("/", "_").lower()
+            if safe_name == ".": safe_name = "part"
+            
+            file_path = state["dir"] / f"history_{safe_name}_{state["file_idx"]}.md"
+            file_path.write_text(state["current_content"], encoding="utf-8")
+            created_files.append(file_path)
 
     return created_files

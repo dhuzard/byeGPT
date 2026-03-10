@@ -34,7 +34,7 @@ def _extract_user_messages(conversations: list[dict[str, Any]]) -> list[dict[str
     return messages
 
 
-def _extract_topics(conversations: list[dict[str, Any]], top_n: int = 20) -> list[tuple[str, int]]:
+def extract_topics(conversations: list[dict[str, Any]], top_n: int = 20) -> list[tuple[str, int]]:
     """Extract top topics from conversation titles using keyword frequency."""
     # Common stop words to filter out
     stop_words = frozenset({
@@ -59,6 +59,54 @@ def _extract_topics(conversations: list[dict[str, Any]], top_n: int = 20) -> lis
                 word_counts[word] += 1
 
     return word_counts.most_common(top_n)
+
+
+def extract_subtopics(
+    conversations: list[dict[str, Any]],
+    topics: list[str],
+    top_n: int = 3,
+) -> dict[str, list[tuple[str, int]]]:
+    """
+    For each topic, filter conversations whose title contains that topic,
+    then extract the top-N most frequent co-occurring keywords as subtopics.
+
+    Returns a dict mapping topic -> [(subtopic_word, count), ...].
+    """
+    stop_words = frozenset({
+        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+        "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "can", "shall", "not", "no", "so", "up",
+        "out", "if", "about", "into", "through", "during", "before", "after",
+        "above", "below", "between", "same", "than", "too", "very", "just",
+        "how", "what", "which", "who", "whom", "this", "that", "these",
+        "those", "i", "me", "my", "we", "our", "you", "your", "it", "its",
+        "le", "la", "les", "de", "du", "des", "un", "une", "et", "en",
+        "pour", "dans", "sur", "avec", "par", "est", "sont", "pas",
+    })
+
+    result: dict[str, list[tuple[str, int]]] = {}
+
+    for topic in topics:
+        topic_lower = topic.lower()
+        # Filter conversations that belong to this topic
+        filtered = [
+            c for c in conversations
+            if topic_lower in (c.get("title") or "").lower()
+        ]
+
+        # Count co-occurring keywords (excluding the topic word itself)
+        word_counts: Counter[str] = Counter()
+        for conv in filtered:
+            title = conv.get("title") or ""
+            words = re.findall(r"[a-zA-ZÀ-ÿ]{3,}", title.lower())
+            for word in words:
+                if word not in stop_words and word != topic_lower:
+                    word_counts[word] += 1
+
+        result[topic] = word_counts.most_common(top_n)
+
+    return result
 
 
 def _analyze_activity(conversations: list[dict[str, Any]]) -> list[tuple[str, int]]:
@@ -122,7 +170,7 @@ def generate_persona(conversations: list[dict[str, Any]]) -> str:
     """
     total_convs = len(conversations)
     user_messages = _extract_user_messages(conversations)
-    topics = _extract_topics(conversations)
+    topics = extract_topics(conversations)
     activity = _analyze_activity(conversations)
     style = _analyze_communication_style(user_messages)
     models = _get_models_used(conversations)

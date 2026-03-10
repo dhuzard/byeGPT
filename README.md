@@ -55,6 +55,7 @@ That's it! Your files are in `./gemini_history/`, ready to upload to Gemini.
 
 ## ✨ Features
 
+- 📂 **Topic Organizer** — Interactively categorize your history into subfolders based on your top AI topics
 - 📦 **ZIP & JSON support** — Feed it `.zip` or `conversations.json` directly
 - ✨ **Zero-config auto-detect** — Automatically finds your export file in the current folder
 - 📏 **Smart splitting** — Files respect Gemini's ~7MB context window (configurable)
@@ -80,6 +81,7 @@ byegpt convert [OPTIONS]
 |---|---|---|
 | `--input`, `-i` | *(auto)* | Path to `.zip` or `conversations.json` |
 | `--output`, `-o` | `./gemini_history` | Output folder for Markdown files |
+| `--organize` | `false` | Interactively organize into topic subfolders |
 | `--split-size`, `-s` | `7MB` | Max file size per Markdown file |
 | `--no-thinking` | `false` | Exclude thinking/reasoning blocks |
 | `--no-attachments` | `false` | Skip attachment extraction |
