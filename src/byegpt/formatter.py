@@ -276,7 +276,8 @@ def write_split_files(
     respect the size limit (optimized for Gemini's context window).
 
     If `topic_tree` is provided, conversations will be organized into nested
-    folders (topic/subtopic). Returns list of created file paths.
+    folders (topic/subtopic) and Map of Content (MOC) files will be generated.
+    Returns list of created file paths.
     """
     if attachment_map is None:
         attachment_map = {}
@@ -369,4 +370,84 @@ def write_split_files(
             file_path.write_text(state["current_content"], encoding="utf-8")
             created_files.append(file_path)
 
+    # ── MOC Generation ──
+    if topic_tree:
+        _generate_mocs(output_dir, folder_state)
+
     return created_files
+
+
+    brain_map_path.write_text("\n".join(root_lines), encoding="utf-8")
+
+
+def _generate_mocs(output_dir: Path, folder_state: dict[str, dict[str, Any]]) -> None:
+    """
+    Generate Map of Content (MOC) files for Obsidian.
+    Creates a _map.md in each folder and a 00_Brain_Map.md at the root.
+    """
+    # 1. Generate _map.md for each folder that contains files
+    for folder_key, state in folder_state.items():
+        folder_dir = state["dir"]
+        # Find all .md files in this folder (excluding _map.md itself)
+        md_files = sorted([f for f in folder_dir.glob("*.md") if f.name not in ("_map.md", "00_Brain_Map.md")])
+        
+        # Also find subdirectories that have their own _map.md
+        subdirs = sorted([d for d in folder_dir.iterdir() if d.is_dir() and (d / "_map.md").exists()])
+
+        if not md_files and not subdirs:
+            continue
+
+        title = folder_key.replace(os.path.sep, " / ") if folder_key != "." else "Root"
+        toc_lines = [f"# Map of Content — {title}\n"]
+        toc_lines.append(f"Generated on {datetime.now().strftime('%Y-%m-%d')}\n")
+        
+        if subdirs:
+            toc_lines.append("## Subcategories\n")
+            for sd in subdirs:
+                toc_lines.append(f"- [[{sd.name}/_map|{sd.name}]]")
+            toc_lines.append("")
+
+        if md_files:
+            toc_lines.append("## Conversations\n")
+            for f in md_files:
+                toc_lines.append(f"- [[{f.name}|{f.stem}]]")
+        
+        map_path = folder_dir / "_map.md"
+        map_path.write_text("\n".join(toc_lines), encoding="utf-8")
+
+    # 2. Add MOCs for parent directories that might not have files but have subdirectories
+    # We do a second pass to catch these
+    for folder in output_dir.rglob("*"):
+        if folder.is_dir() and not (folder / "_map.md").exists():
+            sub_mocs = list(folder.glob("*/_map.md"))
+            if sub_mocs:
+                rel_path = folder.relative_to(output_dir)
+                title = str(rel_path).replace(os.path.sep, " / ")
+                toc_lines = [f"# Map of Content — {title}\n"]
+                toc_lines.append(f"Generated on {datetime.now().strftime('%Y-%m-%d')}\n")
+                toc_lines.append("## Subcategories\n")
+                for sm in sorted(sub_mocs):
+                    sd_name = sm.parent.name
+                    toc_lines.append(f"- [[{sd_name}/_map|{sd_name}]]")
+                
+                (folder / "_map.md").write_text("\n".join(toc_lines), encoding="utf-8")
+
+    # 3. Generate root 00_Brain_Map.md
+    root_lines = ["# 🧠 My Memory Vault — Brain Map\n"]
+    root_lines.append(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+    root_lines.append("## Categories\n")
+
+    # Find all top-level MOCs
+    top_level_mocs = sorted(list(output_dir.glob("*/_map.md")))
+    for moc in top_level_mocs:
+        topic = moc.parent.name
+        root_lines.append(f"### [[{topic}/_map|{topic.capitalize()}]]")
+        
+        # Find sub-MOCs for this topic
+        sub_mocs = sorted(list(moc.parent.glob("*/_map.md")))
+        for sm in sub_mocs:
+            sub_name = sm.parent.name
+            root_lines.append(f"  - [[{topic}/{sub_name}/_map|{sub_name}]]")
+
+    brain_map_path = output_dir / "00_Brain_Map.md"
+    brain_map_path.write_text("\n".join(root_lines), encoding="utf-8")

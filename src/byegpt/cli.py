@@ -24,6 +24,7 @@ from byegpt import __version__
 from byegpt.parser import load_conversations, extract_attachments
 from byegpt.formatter import write_split_files
 from byegpt.persona import generate_persona, extract_topics, extract_subtopics
+from byegpt.indexer import VectorIndexer
 
 app = typer.Typer(
     name="byegpt",
@@ -326,6 +327,91 @@ def persona(
             border_style="green",
         )
     )
+
+
+@app.command()
+def index(
+    input_dir: Path = typer.Option(
+        Path("./gemini_history"),
+        "--input", "-i",
+        help="The folder containing Markdown files to index.",
+        exists=True,
+    ),
+    db_path: Path = typer.Option(
+        Path(".byegpt/index"),
+        "--db", "-d",
+        help="Where to store the vector database index.",
+    ),
+) -> None:
+    """
+    Index your Markdown history for semantic search.
+    Requires chromadb and sentence-transformers.
+    """
+    console.print(
+        Panel.fit(
+            f"[bold cyan]byeGPT[/bold cyan] v{__version__}\n"
+            f"[dim]Indexing conversations for Semantic Search[/dim]",
+            border_style="cyan",
+        )
+    )
+
+    indexer = VectorIndexer(db_path)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=40),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("Indexing...", total=100)  # Total determined during run
+
+        def update_progress(current: int, total: int) -> None:
+            progress.update(task, completed=current, total=total)
+
+        start_time = time.time()
+        indexer.index_directory(input_dir, progress_callback=update_progress)
+        duration = time.time() - start_time
+
+    console.print(f"\n[bold green]✅ Indexing complete![/bold green]")
+    console.print(f"  📁 Index stored in: [cyan]{db_path}[/cyan]")
+    console.print(f"  ⏱️  Time taken: {duration:.1f}s")
+
+
+@app.command()
+def query(
+    text: str = typer.Argument(..., help="What are you looking for?"),
+    db_path: Path = typer.Option(
+        Path(".byegpt/index"),
+        "--db", "-d",
+        help="Path to the vector database index.",
+    ),
+    n: int = typer.Option(5, "--results", "-n", help="Number of results to return."),
+) -> None:
+    """
+    Perform a semantic search across your indexed history.
+    """
+    indexer = VectorIndexer(db_path)
+    
+    with console.status(f"[bold green]Searching for '{text}'..."):
+        results = indexer.query(text, n_results=n)
+
+    if not results:
+        console.print("[yellow]No relevant matches found.[/yellow]")
+        return
+
+    console.print(f"\n[bold cyan]🔍 Top {len(results)} matches for:[/bold cyan] [italic]\"{text}\"[/italic]\n")
+
+    for i, res in enumerate(results, 1):
+        meta = res["metadata"]
+        doc = res["document"]
+        # Snippet of the document (first 200 chars)
+        snippet = doc[:300].replace("\n", " ").strip() + "..."
+        
+        console.print(f" [bold]{i}. {meta.get('filename')}[/bold] [dim](distance: {res['distance']:.3f})[/dim]")
+        console.print(f"    [italic]{snippet}[/italic]")
+        console.print(f"    [dim]Source: {meta.get('source')}[/dim]\n")
 
 
 if __name__ == "__main__":

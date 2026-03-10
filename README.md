@@ -55,6 +55,9 @@ That's it! Your files are in `./gemini_history/`, ready to upload to Gemini.
 
 ## ✨ Features
 
+- 🧠 **Intelligence Layer** — Turn your static archive into an active knowledge base
+    - 🧭 **Knowledge Graph** — Automatically generates Map of Content (MOC) files for visual navigation in Obsidian
+    - 🔍 **Semantic Search** — Local vector indexing with ChromaDB for natural language history retrieval
 - 📂 **Topic Organizer** — Interactively categorize your history into subfolders based on your top AI topics
 - 📦 **ZIP & JSON support** — Feed it `.zip` or `conversations.json` directly
 - ✨ **Zero-config auto-detect** — Automatically finds your export file in the current folder
@@ -97,6 +100,30 @@ byegpt persona [OPTIONS]
 | `--input`, `-i` | *(required)* | Path to `.zip` or `conversations.json` |
 | `--output`, `-o` | `./digital_passport.md` | Output file path |
 
+### `byegpt index`
+Index your Markdown history for semantic search.
+
+```bash
+byegpt index [OPTIONS]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--input`, `-i` | `./gemini_history` | Folder containing Markdown files to index |
+| `--db`, `-d` | `.byegpt/index` | Path to store the vector database index |
+
+### `byegpt query`
+Perform a semantic search across your indexed history.
+
+```bash
+byegpt query [TEXT] [OPTIONS]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--db`, `-d` | `.byegpt/index` | Path to the vector database index |
+| `--results`, `-n` | `5` | Number of results to return |
+
 ### General
 
 ```bash
@@ -109,13 +136,16 @@ byegpt --help       # Show help
 ## 🧭 Data Flow
 
 ```mermaid
-graph LR
+graph TD
     A["📦 ChatGPT Export<br/>.zip / .json"] --> B["🔍 Parser<br/>parser.py"]
     B --> C["📎 Attachment<br/>Extractor"]
     B --> D["🌳 Message Tree<br/>Builder"]
     C --> E["📁 assets/"]
     D --> F["✍️ Formatter<br/>formatter.py"]
     F --> G["📝 Markdown Files<br/>≤ 7MB each"]
+    G --> G1["🧭 Knowledge Graph<br/>_map.md files"]
+    G --> G2["🔍 Vector Index<br/>ChromaDB"]
+    G2 --> G3["💬 Semantic Search<br/>byegpt query"]
     F --> H["💭 Thinking<br/>Callouts"]
     F --> I["📋 YAML<br/>Frontmatter"]
     B --> J["🛂 Persona<br/>persona.py"]
