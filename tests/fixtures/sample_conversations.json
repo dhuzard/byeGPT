@@ -1,0 +1,192 @@
+[
+  {
+    "title": "Test Conversation One",
+    "create_time": 1710072000,
+    "update_time": 1710072100,
+    "conversation_id": "conv-001",
+    "mapping": {
+      "root": {
+        "id": "root",
+        "message": null,
+        "parent": null,
+        "children": ["msg-1"]
+      },
+      "msg-1": {
+        "id": "msg-1",
+        "message": {
+          "author": {"role": "user"},
+          "content": {
+            "content_type": "text",
+            "parts": ["What is Python?"]
+          },
+          "create_time": 1710072001,
+          "metadata": {}
+        },
+        "parent": "root",
+        "children": ["msg-2"]
+      },
+      "msg-2": {
+        "id": "msg-2",
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {
+            "content_type": "text",
+            "parts": ["Python is a high-level programming language known for its simplicity."]
+          },
+          "create_time": 1710072002,
+          "metadata": {"model_slug": "gpt-4o"}
+        },
+        "parent": "msg-1",
+        "children": ["msg-3"]
+      },
+      "msg-3": {
+        "id": "msg-3",
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {
+            "content_type": "thoughts",
+            "thoughts": "Let me think about how to explain Python best. It was created by Guido van Rossum in 1991."
+          },
+          "create_time": 1710072003,
+          "metadata": {"model_slug": "gpt-4o"}
+        },
+        "parent": "msg-2",
+        "children": ["msg-4"]
+      },
+      "msg-4": {
+        "id": "msg-4",
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {
+            "content_type": "reasoning_recap",
+            "content": "I considered the history and key features of Python."
+          },
+          "create_time": 1710072004,
+          "metadata": {}
+        },
+        "parent": "msg-3",
+        "children": ["msg-5"]
+      },
+      "msg-5": {
+        "id": "msg-5",
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {
+            "content_type": "code",
+            "parts": ["print('Hello, World!')"],
+            "language": "python"
+          },
+          "create_time": 1710072005,
+          "metadata": {}
+        },
+        "parent": "msg-4",
+        "children": ["msg-6"]
+      },
+      "msg-6": {
+        "id": "msg-6",
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {
+            "content_type": "execution_output",
+            "parts": ["Hello, World!"]
+          },
+          "create_time": 1710072006,
+          "metadata": {}
+        },
+        "parent": "msg-5",
+        "children": ["msg-7"]
+      },
+      "msg-7": {
+        "id": "msg-7",
+        "message": {
+          "author": {"role": "user"},
+          "content": {
+            "content_type": "multimodal_text",
+            "parts": [
+              "Look at this image:",
+              {
+                "content_type": "image_asset_pointer",
+                "asset_pointer": "sediment://file_abc123",
+                "size_bytes": 50000,
+                "width": 800,
+                "height": 600
+              }
+            ]
+          },
+          "create_time": 1710072007,
+          "metadata": {}
+        },
+        "parent": "msg-6",
+        "children": ["msg-8"]
+      },
+      "msg-8": {
+        "id": "msg-8",
+        "message": {
+          "author": {"role": "assistant"},
+          "content": {
+            "content_type": "tether_quote",
+            "parts": ["According to the Python documentation, Python is an interpreted language."]
+          },
+          "create_time": 1710072008,
+          "metadata": {}
+        },
+        "parent": "msg-7",
+        "children": []
+      }
+    }
+  },
+  {
+    "title": "Empty Conversation",
+    "create_time": 1710158400,
+    "conversation_id": "conv-002",
+    "mapping": {
+      "root": {
+        "id": "root",
+        "message": null,
+        "parent": null,
+        "children": []
+      }
+    }
+  },
+  {
+    "title": null,
+    "create_time": null,
+    "conversation_id": "conv-003",
+    "mapping": {
+      "root": {
+        "id": "root",
+        "message": null,
+        "parent": null,
+        "children": ["msg-1"]
+      },
+      "msg-1": {
+        "id": "msg-1",
+        "message": {
+          "author": {"role": "system"},
+          "content": {
+            "content_type": "text",
+            "parts": ["You are a helpful assistant."]
+          },
+          "create_time": 1710158401,
+          "metadata": {}
+        },
+        "parent": "root",
+        "children": ["msg-2"]
+      },
+      "msg-2": {
+        "id": "msg-2",
+        "message": {
+          "author": {"role": "user"},
+          "content": {
+            "content_type": "text",
+            "parts": ["Hello!"]
+          },
+          "create_time": 1710158402,
+          "metadata": {}
+        },
+        "parent": "msg-1",
+        "children": []
+      }
+    }
+  }
+]

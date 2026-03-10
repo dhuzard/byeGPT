@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "byegpt"
+version = "2.0.0"
+description = "Convert ChatGPT exports to Gemini-optimized Markdown — with attachment handling, thinking blocks, and a Digital Passport feature."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "damie"},
+]
+keywords = ["chatgpt", "gemini", "migration", "markdown", "ai", "export"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "typer[all]>=0.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+byegpt = "byegpt.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/damie/byegpt"
+Repository = "https://github.com/damie/byegpt"
+Issues = "https://github.com/damie/byegpt/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
