@@ -1,6 +1,7 @@
 # 🚀 byeGPT
 
 > **Migrate your entire ChatGPT history to Gemini-optimized Markdown — in seconds.**
+> *Plus: transform it into a searchable, intelligent knowledge base optimized for NotebookLM, Obsidian, and Local RAG.*
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -10,15 +11,36 @@
 
 ## Why byeGPT?
 
-Switching from ChatGPT to Gemini? You shouldn't lose your conversation history. **byeGPT** converts your ChatGPT data export into clean, structured Markdown files optimized for Gemini's context window.
+Your conversation history is a goldmine. Whether you just want a quick backup to throw into NotebookLM or you want to build a fully searchable local knowledge base, **byeGPT** has you covered. It converts your raw, messy ChatGPT data export into perfectly-sized Markdown files.
 
 | Problem | byeGPT Solution |
 |---|---|
-| Gemini's context window has a ~7MB limit per file | Auto-splits into perfectly-sized chunks |
+| Gemini/NotebookLM has file size limits | Auto-splits into perfectly-sized chunks (e.g., ~7MB) |
 | ChatGPT exports are raw JSON blobs | Converts to clean, readable Markdown |
+| Finding old conversations is impossible | Optional **Semantic Search** with local vector indexing |
+| Hard to visualize your knowledge | Automatically builds **Obsidian Knowledge Graphs** (MOCs) |
 | Thinking blocks (O1/GPT-5) clutter the output | Collapsed Obsidian callouts keep it clean |
-| Attachments are scattered with random filenames | Extracted & linked with proper relative paths |
-| You want Gemini to "know you" instantly | **Digital Passport** synthesizes your AI profile |
+| Attachments are scattered | Extracted & linked with proper relative paths |
+| You want AI to "know you" instantly | **Digital Passport** synthesizes your AI communication profile |
+
+---
+
+## 🛤️ Two Ways to Use byeGPT
+
+### Use Case A: The Quick Migration (for NotebookLM / Gemini)
+*You just want your chat history in a format that NotebookLM or Gemini Advanced can easily read without hitting file-size limits.*
+
+1. Run `byegpt convert` and it instantly turns your `.zip` export into clean Markdown chunks in `./gemini_history/`.
+2. Upload the folder directly to NotebookLM as a source.
+3. Automatically get a `digital_passport.md` to give Gemini or NotebookLM instant context on who you are.
+
+### Use Case B: The Intelligence Layer (for Obsidian / Local RAG)
+*You want to build a local, searchable "second brain" out of your AI conversations.*
+
+1. Run `byegpt convert --organize` to interactively sort your history into topic subfolders.
+2. byeGPT generates Maps of Content (`_map.md`) so you can visually click through your history in Obsidian.
+3. Run `byegpt index` to embed your history locally using ChromaDB.
+4. Run `byegpt query "What did we discuss about python decorators?"` to instantly find answers from your past.
 
 ---
 
@@ -34,7 +56,7 @@ cd byegpt
 # Install (editable mode)
 pip install -e .
 
-# Install Intelligence Layer dependencies (recommended)
+# Optional: Install Intelligence Layer dependencies (for RAG/Search)
 pip install chromadb==0.4.15 sentence-transformers transformers
 ```
 
@@ -42,17 +64,17 @@ pip install chromadb==0.4.15 sentence-transformers transformers
 
 Go to [ChatGPT Settings → Data Controls → Export Data](https://chatgpt.com/#settings/DataControls). You'll receive a `.zip` file via email.
 
-### 3. Convert
+### 3. Run it
 
 ```bash
-# Convert instantly — byeGPT auto-detects conversations.json or your export .zip!
+# Convert instantly — byeGPT auto-detects your export .zip!
 byegpt convert
 
-# Or generate your Digital Passport
+# Generate your Digital Passport
 byegpt persona
 ```
 
-That's it! Your files are in `./gemini_history/`, ready to upload to Gemini.
+That's it! Your files are in `./gemini_history/`, ready for NotebookLM, Gemini, or Obsidian.
 
 ---
 
@@ -238,6 +260,6 @@ MIT — see [LICENSE](LICENSE) for details.
 ---
 
 <p align="center">
-  Made with ❤️ for everyone migrating to Gemini<br/>
+  Made with ❤️ for everyone building a personal AI knowledge base<br/>
   <sub>byeGPT v2.0.0</sub>
 </p>
