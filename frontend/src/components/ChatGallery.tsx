@@ -2,7 +2,6 @@
  * ChatGallery — displays a grid of converted chat files.
  */
 
-import React from "react";
 import { FileText } from "lucide-react";
 
 interface ChatGalleryProps {

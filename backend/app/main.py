@@ -18,17 +18,19 @@ PATCH /notebooks/{id}/slides/{idx} — Revise a slide with a custom prompt
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import json
 import logging
 import os
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Optional
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
 from .auth_manager import is_authenticated, login_and_save
 from .cloud import (
@@ -82,6 +84,7 @@ _STORAGE_DIR = Path(os.environ.get("BYEGPT_STORAGE", ".byegpt"))
 _COOKIES_PATH = _STORAGE_DIR / "storage.json"
 _AUDIO_DIR = _STORAGE_DIR / "audio"
 _CONVERTED_DIR = _STORAGE_DIR / "converted"
+_TUSD_UPLOAD_DIR = Path(os.environ.get("BYEGPT_TUSD_UPLOAD_DIR", ".uploads"))
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -96,6 +99,13 @@ class UploadNotebookRequest(BaseModel):
 class ReviseSlideRequest(BaseModel):
     revision_prompt: str
     artifact_id: str
+
+
+class TusUploadInfo(BaseModel):
+    ID: str
+    Size: int
+    Offset: int
+    MetaData: dict[str, str] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +140,15 @@ async def auth_login(background_tasks: BackgroundTasks) -> dict:
     if is_authenticated(_COOKIES_PATH):
         return {"status": "already_authenticated"}
 
+    if os.name != "nt" and not os.environ.get("DISPLAY"):
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                "Interactive NotebookLM login is unavailable in Docker without an X server. "
+                "Provide a valid .byegpt/storage.json session file or run the backend outside Docker for login."
+            ),
+        )
+
     background_tasks.add_task(login_and_save, _COOKIES_PATH, headless=False)
     return {"status": "login_started", "message": "Open the browser window to complete login."}
 
@@ -158,8 +177,7 @@ async def convert_export(
     output_dir = _CONVERTED_DIR / str(uuid.uuid4())
 
     try:
-        result = await asyncio.to_thread(
-            convert_with_anchors,
+        return await _convert_archive(
             input_path=tmp_path,
             output_dir=output_dir,
             max_size_mb=max_size_mb,
@@ -169,13 +187,50 @@ async def convert_export(
     finally:
         tmp_path.unlink(missing_ok=True)
 
-    return {
-        "output_dir": str(output_dir),
-        "files_created": len(result.created_files),
-        "attachment_count": result.attachment_count,
-        "conversation_count": result.conversation_count,
-        "file_paths": [str(p) for p in result.created_files],
-    }
+
+@app.post("/convert/tus/{upload_id}", tags=["convert"])
+async def convert_tus_upload(
+    upload_id: str,
+    max_size_mb: float = 7.0,
+    include_thinking: bool = True,
+    include_attachments: bool = True,
+) -> dict:
+    """Convert a completed tus upload stored on the shared upload volume."""
+    info = _load_tus_upload_info(upload_id)
+    source_path = _TUSD_UPLOAD_DIR / upload_id
+    if not source_path.exists():
+        raise HTTPException(status_code=404, detail=f"Tus upload '{upload_id}' not found.")
+
+    file_size = source_path.stat().st_size
+    metadata = {key: _normalize_tusd_metadata(value) for key, value in info.MetaData.items()}
+
+    if file_size < info.Size:
+        raise HTTPException(status_code=409, detail="Upload is not complete yet.")
+
+    original_name = metadata.get("filename")
+    if not original_name:
+        raise HTTPException(status_code=400, detail="Tus upload metadata is missing filename.")
+
+    suffix = Path(original_name).suffix.lower()
+    if suffix not in {".zip", ".json"}:
+        raise HTTPException(status_code=400, detail="Unsupported upload type. Use .zip or .json.")
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(source_path.read_bytes())
+        tmp_path = Path(tmp.name)
+
+    output_dir = _CONVERTED_DIR / str(uuid.uuid4())
+
+    try:
+        return await _convert_archive(
+            input_path=tmp_path,
+            output_dir=output_dir,
+            max_size_mb=max_size_mb,
+            include_thinking=include_thinking,
+            include_attachments=include_attachments,
+        )
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 @app.post("/persona", tags=["convert"])
@@ -289,3 +344,58 @@ async def revise_notebook_slide(
         cookies_path=_COOKIES_PATH,
     )
     return {"notebook_id": notebook_id, "slide_index": slide_index, "slide": updated}
+
+
+async def _convert_archive(
+    input_path: Path,
+    output_dir: Path,
+    max_size_mb: float,
+    include_thinking: bool,
+    include_attachments: bool,
+) -> dict:
+    try:
+        result = await asyncio.to_thread(
+            convert_with_anchors,
+            input_path=input_path,
+            output_dir=output_dir,
+            max_size_mb=max_size_mb,
+            include_thinking=include_thinking,
+            include_attachments=include_attachments,
+        )
+    except Exception as exc:
+        logger.exception("Conversion failed for %s", input_path)
+        raise HTTPException(status_code=500, detail=f"Conversion failed: {exc}") from exc
+
+    return {
+        "output_dir": str(output_dir),
+        "files_created": len(result.created_files),
+        "attachment_count": result.attachment_count,
+        "conversation_count": result.conversation_count,
+        "file_paths": [str(p) for p in result.created_files],
+    }
+
+
+def _load_tus_upload_info(upload_id: str) -> TusUploadInfo:
+    info_path = _TUSD_UPLOAD_DIR / f"{upload_id}.info"
+    if not info_path.exists():
+        raise HTTPException(status_code=404, detail=f"Tus upload '{upload_id}' not found.")
+
+    try:
+        payload = json.loads(info_path.read_text(encoding="utf-8"))
+        return TusUploadInfo.model_validate(payload)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Tus upload metadata is invalid.") from exc
+
+
+def _normalize_tusd_metadata(value: str) -> str:
+    if not value:
+        return value
+
+    try:
+        decoded = base64.b64decode(value, validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        return value
+
+    if decoded and all(ch.isprintable() or ch.isspace() for ch in decoded):
+        return decoded
+    return value

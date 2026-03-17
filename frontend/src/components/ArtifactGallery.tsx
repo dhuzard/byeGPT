@@ -15,7 +15,6 @@ interface ArtifactGalleryProps {
   mindMap: MindMapData | null;
   audioUrl: string | null;
   slides: Slide[];
-  notebookId: string;
   onReviseSlide?: (slideIndex: number, prompt: string) => void;
 }
 
@@ -23,7 +22,6 @@ export function ArtifactGallery({
   mindMap,
   audioUrl,
   slides,
-  notebookId,
   onReviseSlide,
 }: ArtifactGalleryProps) {
   if (!mindMap && !audioUrl && slides.length === 0) return null;
@@ -35,7 +33,6 @@ export function ArtifactGallery({
       {slides.length > 0 && (
         <SlideEditor
           slides={slides}
-          notebookId={notebookId}
           onRevise={onReviseSlide}
         />
       )}
@@ -93,11 +90,10 @@ function PodcastPlayer({ audioUrl }: { audioUrl: string }) {
 
 interface SlideEditorProps {
   slides: Slide[];
-  notebookId: string;
   onRevise?: (slideIndex: number, prompt: string) => void;
 }
 
-function SlideEditor({ slides, notebookId, onRevise }: SlideEditorProps) {
+function SlideEditor({ slides, onRevise }: SlideEditorProps) {
   const [expanded, setExpanded] = useState<number | null>(0);
   const [prompts, setPrompts] = useState<Record<number, string>>({});
 

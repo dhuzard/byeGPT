@@ -51,8 +51,7 @@ export interface NotebookState {
 async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);
   if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(detail || `HTTP ${res.status}`);
+    throw new Error(await readApiError(res));
   }
   return res.json() as Promise<T>;
 }
@@ -64,8 +63,7 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(detail || `HTTP ${res.status}`);
+    throw new Error(await readApiError(res));
   }
   return res.json() as Promise<T>;
 }
@@ -77,10 +75,27 @@ async function apiPatch<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(detail || `HTTP ${res.status}`);
+    throw new Error(await readApiError(res));
   }
   return res.json() as Promise<T>;
+}
+
+async function readApiError(res: Response): Promise<string> {
+  const text = await res.text();
+  if (!text) {
+    return `HTTP ${res.status}`;
+  }
+
+  try {
+    const parsed = JSON.parse(text) as { detail?: string };
+    if (parsed.detail) {
+      return parsed.detail;
+    }
+  } catch {
+    // Fall back to the plain text body below.
+  }
+
+  return text;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,18 +1,13 @@
-/**
- * IngestionDropzone — drag-and-drop area for uploading a ChatGPT .zip export.
- *
- * Displays a real-time topic cluster view once the parse is complete.
- */
-
 import React, { useCallback, useRef, useState } from "react";
-import { Upload, FileArchive, CheckCircle2, AlertCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, FileArchive } from "lucide-react";
 import * as tus from "tus-js-client";
 
 const API_BASE = "/api";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+const viteEnv = (import.meta as ImportMeta & {
+  env?: Record<string, string | undefined>;
+}).env;
+const TUSD_ENDPOINT =
+  viteEnv?.VITE_TUSD_ENDPOINT?.trim() || "http://localhost:1080/files";
 
 interface ConvertResult {
   output_dir: string;
@@ -24,51 +19,92 @@ interface ConvertResult {
 
 interface IngestionDropzoneProps {
   onConverted?: (result: ConvertResult) => void;
+  onFileSelected?: (file: File | null) => void;
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
-export function IngestionDropzone({ onConverted }: IngestionDropzoneProps) {
+export function IngestionDropzone({
+  onConverted,
+  onFileSelected,
+}: IngestionDropzoneProps) {
   const [isDragging, setIsDragging] = useState(false);
-  const [status, setStatus] = useState<"idle" | "uploading" | "done" | "error">("idle");
+  const [status, setStatus] = useState<
+    "idle" | "uploading" | "processing" | "done" | "error"
+  >("idle");
   const [result, setResult] = useState<ConvertResult | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
+  const [uploadProgress, setUploadProgress] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const [uploadProgress, setUploadProgress] = useState<number>(0);
 
   const uploadFile = useCallback(
     async (file: File) => {
+      const normalizedName = file.name.toLowerCase();
+      if (!(normalizedName.endsWith(".zip") || normalizedName.endsWith(".json"))) {
+        setStatus("error");
+        setResult(null);
+        setUploadProgress(0);
+        setErrorMsg("Unsupported file type. Upload a .zip export or conversations.json.");
+        onFileSelected?.(null);
+        return;
+      }
+
       setStatus("uploading");
+      setResult(null);
       setErrorMsg("");
       setUploadProgress(0);
+      onFileSelected?.(file);
 
-      // Use tus-js-client for chunked upload
       const upload = new tus.Upload(file, {
-        endpoint: `${API_BASE}/convert`, // This must be a tus-compatible endpoint
-        chunkSize: 5 * 1024 * 1024, // 5MB chunks
+        endpoint: TUSD_ENDPOINT,
+        chunkSize: 5 * 1024 * 1024,
         retryDelays: [0, 1000, 3000, 5000],
+        removeFingerprintOnSuccess: true,
         metadata: {
           filename: file.name,
           filetype: file.type,
         },
-        onError: function (error) {
+        onError(error) {
           setErrorMsg(error.message);
           setStatus("error");
         },
-        onProgress: function (bytesUploaded, bytesTotal) {
-          setUploadProgress((bytesUploaded / bytesTotal) * 100);
+        onProgress(bytesUploaded, bytesTotal) {
+          setUploadProgress(Math.round((bytesUploaded / bytesTotal) * 100));
         },
-        onSuccess: async function () {
-          // After upload, fetch conversion result (simulate for now)
-          setStatus("done");
-          // You may need to fetch conversion result from backend here
+        async onSuccess() {
+          try {
+            setStatus("processing");
+
+            const uploadUrl = upload.url;
+            if (!uploadUrl) {
+              throw new Error("Tus upload completed without a resumable URL.");
+            }
+
+            const uploadId = new URL(uploadUrl).pathname.split("/").pop();
+            if (!uploadId) {
+              throw new Error("Could not determine the uploaded file ID.");
+            }
+
+            const response = await fetch(`${API_BASE}/convert/tus/${uploadId}`, {
+              method: "POST",
+            });
+            if (!response.ok) {
+              throw new Error(await response.text());
+            }
+
+            const data = (await response.json()) as ConvertResult;
+            setResult(data);
+            setStatus("done");
+            onConverted?.(data);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            setErrorMsg(message);
+            setStatus("error");
+          }
         },
       });
+
       upload.start();
     },
-    [onConverted]
+    [onConverted, onFileSelected]
   );
 
   const handleDrop = useCallback(
@@ -76,7 +112,9 @@ export function IngestionDropzone({ onConverted }: IngestionDropzoneProps) {
       e.preventDefault();
       setIsDragging(false);
       const file = e.dataTransfer.files[0];
-      if (file) uploadFile(file);
+      if (file) {
+        void uploadFile(file);
+      }
     },
     [uploadFile]
   );
@@ -84,25 +122,39 @@ export function IngestionDropzone({ onConverted }: IngestionDropzoneProps) {
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      if (file) uploadFile(file);
+      if (file) {
+        void uploadFile(file);
+      }
     },
     [uploadFile]
   );
 
+  const isBusy = status === "uploading" || status === "processing";
+  const progressWidth = status === "processing" ? 100 : uploadProgress;
+
   return (
     <div className="w-full">
       <div
-        onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setIsDragging(true);
+        }}
         onDragLeave={() => setIsDragging(false)}
         onDrop={handleDrop}
-        onClick={() => inputRef.current?.click()}
+        onClick={() => {
+          if (!isBusy) {
+            inputRef.current?.click();
+          }
+        }}
         className={`
-          relative flex flex-col items-center justify-center gap-4 rounded-2xl border-2 border-dashed
-          p-12 cursor-pointer transition-colors
-          ${isDragging
-            ? "border-brand-500 bg-brand-500/10"
-            : "border-gray-700 bg-gray-900 hover:border-gray-500 hover:bg-gray-800"}
-          ${status === "uploading" ? "pointer-events-none opacity-60" : ""}
+          relative flex cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl
+          border-2 border-dashed p-12 transition-colors
+          ${
+            isDragging
+              ? "border-brand-500 bg-brand-500/10"
+              : "border-gray-700 bg-gray-900 hover:border-gray-500 hover:bg-gray-800"
+          }
+          ${isBusy ? "pointer-events-none opacity-60" : ""}
         `}
       >
         <input
@@ -111,49 +163,59 @@ export function IngestionDropzone({ onConverted }: IngestionDropzoneProps) {
           accept=".zip,.json"
           className="hidden"
           onChange={handleFileChange}
+          disabled={isBusy}
         />
 
-        {status === "idle" || status === "uploading" ? (
+        {status === "idle" || status === "uploading" || status === "processing" ? (
           <>
             <div className="rounded-full bg-gray-800 p-4">
               <FileArchive className="h-10 w-10 text-brand-500" />
             </div>
             <div className="text-center">
               <p className="text-lg font-semibold text-gray-100">
-                {status === "uploading" ? "Converting…" : "Drop your ChatGPT export here"}
+                {status === "uploading"
+                  ? "Uploading export..."
+                  : status === "processing"
+                    ? "Processing export..."
+                    : "Drop your ChatGPT export here"}
               </p>
               <p className="mt-1 text-sm text-gray-400">
                 Accepts <code>.zip</code> or <code>conversations.json</code>
               </p>
             </div>
-            {status === "uploading" && (
-              <div className="h-1.5 w-40 overflow-hidden rounded-full bg-gray-700">
-                <div className="h-full animate-pulse bg-brand-500 rounded-full w-3/4" />
-              </div>
-            )}
-            {status === "uploading" && (
-              <div className="mt-2 text-sm text-gray-300">
-                Upload progress: {uploadProgress}%
-              </div>
+            {isBusy && (
+              <>
+                <div className="h-1.5 w-40 overflow-hidden rounded-full bg-gray-700">
+                  <div
+                    className="h-full rounded-full bg-brand-500 transition-all"
+                    style={{ width: `${progressWidth}%` }}
+                  />
+                </div>
+                <div className="mt-2 text-sm text-gray-300">
+                  {status === "uploading"
+                    ? `Upload progress: ${uploadProgress}%`
+                    : "Upload complete. Running conversion..."}
+                </div>
+              </>
             )}
           </>
         ) : status === "done" && result ? (
           <div className="flex flex-col items-center gap-3 text-center">
             <CheckCircle2 className="h-12 w-12 text-green-400" />
             <p className="text-lg font-semibold text-green-400">Conversion complete!</p>
-            <div className="grid grid-cols-3 gap-4 mt-2 text-sm text-gray-300">
+            <div className="mt-2 grid grid-cols-3 gap-4 text-sm text-gray-300">
               <Stat label="Conversations" value={result.conversation_count} />
               <Stat label="Files created" value={result.files_created} />
               <Stat label="Attachments" value={result.attachment_count} />
             </div>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="mt-1 text-xs text-gray-500">
               Output: <code>{result.output_dir}</code>
             </p>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-2 text-center">
             <AlertCircle className="h-10 w-10 text-red-400" />
-            <p className="text-red-400 font-medium">Conversion failed</p>
+            <p className="font-medium text-red-400">Conversion failed</p>
             <p className="text-xs text-gray-400">{errorMsg}</p>
           </div>
         )}

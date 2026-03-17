@@ -36,11 +36,14 @@ export default function App() {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [notebookIds, setNotebookIds] = useState<string[]>([]);
 
-  const { mindMap, audioUrl, slides, fetchMindMap, fetchAudio, fetchSlides, reviseSlide } =
-    useNotebook();
+  const { mindMap, audioUrl, slides, reviseSlide } = useNotebook();
 
   const handleConverted = (result: ConvertResult) => {
     setConvertResult(result);
+  };
+
+  const handleSelectedFile = (file: File | null) => {
+    setUploadedFile(file);
   };
 
   const activeNotebookId = notebookIds[0] ?? "";
@@ -71,6 +74,7 @@ export default function App() {
               <SectionHeader step={1} title="Import your ChatGPT export" />
               <IngestionDropzone
                 onConverted={handleConverted}
+                onFileSelected={handleSelectedFile}
               />
             </section>
 
@@ -98,7 +102,6 @@ export default function App() {
                   mindMap={mindMap}
                   audioUrl={audioUrl}
                   slides={slides}
-                  notebookId={activeNotebookId}
                   onReviseSlide={(idx, prompt) =>
                     reviseSlide(activeNotebookId, "", idx, prompt)
                   }

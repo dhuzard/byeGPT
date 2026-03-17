@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     libatk-bridge2.0-0 \
     libcups2 \
     libdrm2 \
+    libxfixes3 \
     libxkbcommon0 \
     libxcomposite1 \
     libxdamage1 \
