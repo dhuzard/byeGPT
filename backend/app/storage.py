@@ -44,16 +44,29 @@ class StorageManager:
         return self.notebooks_dir / "index.json"
 
     def save_passport(self, markdown: str) -> dict[str, Any]:
+        return self.save_passport_bundle(markdown=markdown, taxonomy=None)
+
+    def save_passport_bundle(
+        self,
+        *,
+        markdown: str,
+        taxonomy: dict[str, Any] | None,
+    ) -> dict[str, Any]:
         passport_id = f"passport_{uuid.uuid4().hex[:12]}"
         created_at = utcnow_iso()
         path = self.passports_dir / f"{passport_id}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(markdown, encoding="utf-8")
+        taxonomy_path = self.passports_dir / f"{passport_id}.taxonomy.json"
+        if taxonomy is not None:
+            _write_json(taxonomy_path, taxonomy)
 
         metadata = {
             "passport_id": passport_id,
             "created_at": created_at,
             "path": str(path),
+            "taxonomy_path": str(taxonomy_path) if taxonomy is not None else None,
+            "taxonomy_version": taxonomy.get("version") if taxonomy else None,
         }
         index = _read_json(self.passports_index, {})
         index[passport_id] = metadata
@@ -67,6 +80,18 @@ class StorageManager:
             return None
         return metadata
 
+    def get_passport_taxonomy(self, passport_id: str) -> dict[str, Any] | None:
+        metadata = self.get_passport(passport_id)
+        if not metadata:
+            return None
+        taxonomy_path = metadata.get("taxonomy_path")
+        if not taxonomy_path:
+            return None
+        path = Path(taxonomy_path)
+        if not path.exists():
+            return None
+        return _read_json(path, None)
+
     def register_notebook(
         self,
         *,
@@ -74,14 +99,28 @@ class StorageManager:
         title: str,
         output_dir: Path,
         source_paths: list[Path],
+        kind: str = "master",
+        passport_id: str | None = None,
+        taxonomy_version: str | None = None,
+        parent_notebook_id: str | None = None,
+        selection_filters: list[dict[str, str]] | None = None,
+        source_count: int | None = None,
+        conversation_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         index = _read_json(self.notebooks_index, {})
         record = {
             "notebook_id": notebook_id,
             "title": title,
+            "kind": kind,
             "output_dir": str(Path(output_dir)),
             "source_paths": [str(Path(path)) for path in source_paths],
+            "source_count": source_count if source_count is not None else len(source_paths),
             "created_at": utcnow_iso(),
+            "passport_id": passport_id,
+            "taxonomy_version": taxonomy_version,
+            "parent_notebook_id": parent_notebook_id,
+            "selection_filters": selection_filters or [],
+            "conversation_ids": conversation_ids or [],
         }
         index[notebook_id] = record
         _write_json(self.notebooks_index, index)
@@ -108,6 +147,12 @@ class StorageManager:
     def get_notebook(self, notebook_id: str) -> dict[str, Any] | None:
         index = _read_json(self.notebooks_index, {})
         return index.get(notebook_id)
+
+    def list_notebooks(self) -> list[dict[str, Any]]:
+        index = _read_json(self.notebooks_index, {})
+        notebooks = list(index.values())
+        notebooks.sort(key=lambda item: item.get("created_at", ""))
+        return notebooks
 
     def list_notebook_artifacts(self, notebook_id: str) -> list[dict[str, Any]]:
         index = _read_json(self.artifacts_index, {})
@@ -207,6 +252,14 @@ class StorageManager:
                     passport_path = Path(passport["path"])
                     if passport_path.exists():
                         zf.write(passport_path, arcname=f"passport/{passport_path.name}")
+                    taxonomy_path = passport.get("taxonomy_path")
+                    if taxonomy_path and Path(taxonomy_path).exists():
+                        zf.write(taxonomy_path, arcname=f"passport/{Path(taxonomy_path).name}")
+
+            notebook_json = self.root / "exports" / f"{notebook_id}.notebook.json"
+            _write_json(notebook_json, notebook)
+            zf.write(notebook_json, arcname="notebook/metadata.json")
+            notebook_json.unlink(missing_ok=True)
 
             for artifact in self.list_notebook_artifacts(notebook_id):
                 for file_path in artifact.get("files", {}).values():

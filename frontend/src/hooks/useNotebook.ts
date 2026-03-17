@@ -22,6 +22,33 @@ export interface QuizData {
   questions: QuizQuestion[];
 }
 
+export interface TaxonomySubcategory {
+  name: string;
+  slug: string;
+  count: number;
+  representative_titles?: string[];
+  conversation_ids: string[];
+}
+
+export interface TaxonomyCategory {
+  name: string;
+  slug: string;
+  count: number;
+  representative_titles?: string[];
+  subcategories: TaxonomySubcategory[];
+}
+
+export interface TaxonomyData {
+  version?: string;
+  total_conversations: number;
+  categories: TaxonomyCategory[];
+  suggested_notebooks?: Array<{
+    title: string;
+    category: string;
+    subcategories: string[];
+  }>;
+}
+
 export interface ArtifactRecord {
   artifact_id: string;
   notebook_id: string;
@@ -41,9 +68,37 @@ export interface JobRecord {
   } | null;
 }
 
-export interface NotebookState {
-  notebookIds: string[];
+export interface NotebookSelection {
+  category: string;
+  subcategory: string;
+}
+
+export interface NotebookRecord {
+  notebook_id: string;
+  title: string;
+  kind: "master" | "thematic";
+  output_dir: string;
+  source_paths: string[];
+  source_count: number;
+  passport_id?: string | null;
+  taxonomy_version?: string | null;
+  parent_notebook_id?: string | null;
+  selection_filters: NotebookSelection[];
+  conversation_ids: string[];
+  artifacts?: ArtifactRecord[];
+  taxonomy?: TaxonomyData | null;
+}
+
+export interface SourceRecord {
+  path: string;
+  title: string;
+  conversation_id?: string | null;
+}
+
+interface NotebookState {
+  notebooks: NotebookRecord[];
   selectedNotebookId: string | null;
+  sources: SourceRecord[];
   artifacts: ArtifactRecord[];
   currentJob: JobRecord | null;
   isLoading: boolean;
@@ -51,35 +106,35 @@ export interface NotebookState {
 }
 
 async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
-  if (!res.ok) {
-    throw new Error(await readApiError(res));
+  const response = await fetch(`${API_BASE}${path}`);
+  if (!response.ok) {
+    throw new Error(await readApiError(response));
   }
-  return res.json() as Promise<T>;
+  return response.json() as Promise<T>;
 }
 
 async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    throw new Error(await readApiError(res));
+  if (!response.ok) {
+    throw new Error(await readApiError(response));
   }
-  return res.json() as Promise<T>;
+  return response.json() as Promise<T>;
 }
 
 async function apiPatch<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${API_BASE}${path}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    throw new Error(await readApiError(res));
+  if (!response.ok) {
+    throw new Error(await readApiError(response));
   }
-  return res.json() as Promise<T>;
+  return response.json() as Promise<T>;
 }
 
 async function readApiError(res: Response): Promise<string> {
@@ -87,28 +142,43 @@ async function readApiError(res: Response): Promise<string> {
   if (!text) {
     return `HTTP ${res.status}`;
   }
-
   try {
     const parsed = JSON.parse(text) as { detail?: string };
     if (parsed.detail) {
       return parsed.detail;
     }
   } catch {
-    // Fall back to plain text.
+    // Fall back to raw text.
   }
-
   return text;
 }
 
 function withApiBase(path?: string | null): string | null {
-  if (!path) return null;
+  if (!path) {
+    return null;
+  }
   return path.startsWith("http") ? path : `${API_BASE}${path}`;
+}
+
+function mergeNotebooks(
+  current: NotebookRecord[],
+  incoming: NotebookRecord[],
+): NotebookRecord[] {
+  const byId = new Map(current.map((notebook) => [notebook.notebook_id, notebook]));
+  for (const notebook of incoming) {
+    byId.set(notebook.notebook_id, {
+      ...(byId.get(notebook.notebook_id) || {}),
+      ...notebook,
+    });
+  }
+  return Array.from(byId.values());
 }
 
 export function useNotebook() {
   const [state, setState] = useState<NotebookState>({
-    notebookIds: [],
+    notebooks: [],
     selectedNotebookId: null,
+    sources: [],
     artifacts: [],
     currentJob: null,
     isLoading: false,
@@ -118,9 +188,31 @@ export function useNotebook() {
   const setError = (error: string) =>
     setState((current) => ({ ...current, isLoading: false, error }));
 
-  const setSelectedNotebookId = useCallback((notebookId: string) => {
-    setState((current) => ({ ...current, selectedNotebookId: notebookId }));
+  const loadNotebook = useCallback(async (notebookId: string) => {
+    const [detail, sourcePayload] = await Promise.all([
+      apiGet<NotebookRecord>(`/notebooks/${notebookId}`),
+      apiGet<{ sources: SourceRecord[] }>(`/notebooks/${notebookId}/sources`),
+    ]);
+
+    setState((current) => ({
+      ...current,
+      notebooks: mergeNotebooks(current.notebooks, [detail]),
+      selectedNotebookId: notebookId,
+      artifacts: detail.artifacts || [],
+      sources: sourcePayload.sources || [],
+      isLoading: false,
+      error: null,
+    }));
+    return detail;
   }, []);
+
+  const setSelectedNotebookId = useCallback(
+    (notebookId: string) => {
+      setState((current) => ({ ...current, selectedNotebookId: notebookId, isLoading: true }));
+      void loadNotebook(notebookId).catch((err) => setError(String(err)));
+    },
+    [loadNotebook],
+  );
 
   const uploadToNotebookLM = useCallback(
     async (outputDir: string, title = "byeGPT Archive", passportId?: string | null) => {
@@ -132,26 +224,62 @@ export function useNotebook() {
             notebook_title: title,
             output_dir: outputDir,
             passport_id: passportId ?? null,
-          }
+          },
         );
+        const notebooks = await Promise.all(
+          data.notebook_ids.map((notebookId) => apiGet<NotebookRecord>(`/notebooks/${notebookId}`)),
+        );
+        const selectedNotebookId = notebooks[0]?.notebook_id ?? null;
         setState((current) => ({
           ...current,
-          notebookIds: data.notebook_ids,
-          selectedNotebookId: data.notebook_ids[0] ?? null,
+          notebooks: mergeNotebooks(current.notebooks, notebooks),
+          selectedNotebookId,
           isLoading: false,
         }));
-        return data.notebook_ids;
+        if (selectedNotebookId) {
+          await loadNotebook(selectedNotebookId);
+        }
+        return notebooks;
       } catch (err) {
         setError(String(err));
         return [];
       }
     },
-    []
+    [loadNotebook],
   );
 
-  const refreshArtifact = useCallback(async (artifactId: string) => {
-    return apiGet<ArtifactRecord>(`/artifacts/${artifactId}`);
-  }, []);
+  const createDerivedNotebook = useCallback(
+    async (payload: {
+      title: string;
+      passportId: string;
+      parentOutputDir?: string | null;
+      parentNotebookId?: string | null;
+      selections: NotebookSelection[];
+    }) => {
+      setState((current) => ({ ...current, isLoading: true, error: null }));
+      try {
+        const notebook = await apiPost<NotebookRecord>("/notebooks/derived", {
+          title: payload.title,
+          passport_id: payload.passportId,
+          parent_output_dir: payload.parentOutputDir ?? null,
+          parent_notebook_id: payload.parentNotebookId ?? null,
+          selections: payload.selections,
+        });
+        setState((current) => ({
+          ...current,
+          notebooks: mergeNotebooks(current.notebooks, [notebook]),
+          selectedNotebookId: notebook.notebook_id,
+          isLoading: false,
+        }));
+        await loadNotebook(notebook.notebook_id);
+        return notebook;
+      } catch (err) {
+        setError(String(err));
+        return null;
+      }
+    },
+    [loadNotebook],
+  );
 
   const startArtifactJob = useCallback(
     async (types: Array<"mind_map" | "audio" | "slides" | "quiz">) => {
@@ -163,7 +291,7 @@ export function useNotebook() {
       try {
         const job = await apiPost<JobRecord>(
           `/notebooks/${state.selectedNotebookId}/artifacts`,
-          { types }
+          { types },
         );
         setState((current) => ({ ...current, currentJob: job }));
 
@@ -178,28 +306,15 @@ export function useNotebook() {
           throw new Error(latest.error || "Artifact job failed.");
         }
 
-        const artifacts =
-          latest.result?.artifacts ||
-          (await Promise.all(latest.artifact_ids.map((artifactId) => refreshArtifact(artifactId))));
-
-        setState((current) => ({
-          ...current,
-          artifacts: [
-            ...current.artifacts.filter(
-              (existing) => !artifacts.some((incoming) => incoming.type === existing.type)
-            ),
-            ...artifacts,
-          ],
-          currentJob: latest,
-          isLoading: false,
-        }));
+        await loadNotebook(state.selectedNotebookId);
+        setState((current) => ({ ...current, currentJob: latest, isLoading: false }));
         return latest;
       } catch (err) {
         setError(String(err));
         return null;
       }
     },
-    [refreshArtifact, state.selectedNotebookId]
+    [loadNotebook, state.selectedNotebookId],
   );
 
   const reviseSlide = useCallback(
@@ -210,71 +325,55 @@ export function useNotebook() {
       }
 
       try {
-        const data = await apiPatch<{ slide: Slide }>(
+        await apiPatch<{ slide: Slide }>(
           `/notebooks/${state.selectedNotebookId}/slides/${slideIndex}`,
           {
             artifact_id: slidesArtifact.artifact_id,
             revision_prompt: prompt,
-          }
+          },
         );
-
-        setState((current) => ({
-          ...current,
-          artifacts: current.artifacts.map((artifact) => {
-            if (artifact.artifact_id !== slidesArtifact.artifact_id) {
-              return artifact;
-            }
-
-            const currentSlides = Array.isArray(artifact.preview?.slides)
-              ? [...artifact.preview.slides]
-              : [];
-            currentSlides[slideIndex] = data.slide;
-            return {
-              ...artifact,
-              preview: {
-                ...(artifact.preview || {}),
-                slides: currentSlides,
-              },
-            };
-          }),
-        }));
+        await loadNotebook(state.selectedNotebookId);
       } catch (err) {
         setError(String(err));
       }
     },
-    [state.artifacts, state.selectedNotebookId]
+    [loadNotebook, state.artifacts, state.selectedNotebookId],
+  );
+
+  const selectedNotebook = useMemo(
+    () =>
+      state.notebooks.find((notebook) => notebook.notebook_id === state.selectedNotebookId) || null,
+    [state.notebooks, state.selectedNotebookId],
   );
 
   const mindMap = useMemo(
     () => (state.artifacts.find((artifact) => artifact.type === "mind_map")?.preview ?? null) as MindMapData | null,
-    [state.artifacts]
+    [state.artifacts],
   );
-  const audioUrl = useMemo(
-    () => {
-      const downloadUrls = state.artifacts.find((artifact) => artifact.type === "audio")?.download_urls;
-      return withApiBase(downloadUrls?.mp3 ?? downloadUrls?.mp4 ?? downloadUrls?.wav ?? null);
-    },
-    [state.artifacts]
-  );
+  const audioUrl = useMemo(() => {
+    const downloadUrls = state.artifacts.find((artifact) => artifact.type === "audio")?.download_urls;
+    return withApiBase(downloadUrls?.mp3 ?? downloadUrls?.mp4 ?? downloadUrls?.wav ?? null);
+  }, [state.artifacts]);
   const slides = useMemo(
-    () =>
-      ((state.artifacts.find((artifact) => artifact.type === "slides")?.preview?.slides ??
-        []) as Slide[]),
-    [state.artifacts]
+    () => ((state.artifacts.find((artifact) => artifact.type === "slides")?.preview?.slides ?? []) as Slide[]),
+    [state.artifacts],
   );
   const quiz = useMemo(
     () => (state.artifacts.find((artifact) => artifact.type === "quiz")?.preview ?? null) as QuizData | null,
-    [state.artifacts]
+    [state.artifacts],
   );
 
   return {
     ...state,
+    selectedNotebook,
     mindMap,
     audioUrl,
     slides,
     quiz,
     setSelectedNotebookId,
+    loadNotebook,
     uploadToNotebookLM,
+    createDerivedNotebook,
     startArtifactJob,
     reviseSlide,
   };

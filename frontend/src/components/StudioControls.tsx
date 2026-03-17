@@ -11,14 +11,14 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import { JobRecord } from "../hooks/useNotebook";
+import { JobRecord, NotebookRecord } from "../hooks/useNotebook";
 
 const API_BASE = "/api";
 
 interface StudioControlsProps {
   outputDir: string | null;
   passportId: string | null;
-  notebookIds: string[];
+  notebooks: NotebookRecord[];
   selectedNotebookId: string | null;
   currentJob: JobRecord | null;
   isLoading: boolean;
@@ -27,7 +27,7 @@ interface StudioControlsProps {
     outputDir: string,
     title?: string,
     passportId?: string | null
-  ) => Promise<string[]>;
+  ) => Promise<NotebookRecord[]>;
   onGenerateArtifacts: (
     types: Array<"mind_map" | "audio" | "slides" | "quiz">
   ) => Promise<JobRecord | null>;
@@ -37,7 +37,7 @@ interface StudioControlsProps {
 export function StudioControls({
   outputDir,
   passportId,
-  notebookIds,
+  notebooks,
   selectedNotebookId,
   currentJob,
   isLoading,
@@ -107,13 +107,13 @@ export function StudioControls({
     if (!outputDir || !isAuthenticated) {
       return;
     }
-    const ids = await onUpload(outputDir, notebookTitle, passportId);
-    if (ids[0]) {
-      onSelectedNotebookId(ids[0]);
+    const created = await onUpload(outputDir, notebookTitle, passportId);
+    if (created[0]) {
+      onSelectedNotebookId(created[0].notebook_id);
     }
   };
 
-  const notebookId = selectedNotebookId || notebookIds[0] || "";
+  const notebookId = selectedNotebookId || notebooks[0]?.notebook_id || "";
 
   const handleBundleExport = () => {
     if (!notebookId) {
@@ -181,19 +181,19 @@ export function StudioControls({
           label="Create Notebook"
           isLoading={isLoading}
         />
-        {notebookIds.length > 0 && (
+        {notebooks.length > 0 && (
           <div className="mt-3 rounded-xl bg-gray-800 p-3 text-xs text-gray-300">
-            {notebookIds.length} notebook{notebookIds.length > 1 ? "s" : ""} created
+            {notebooks.length} notebook{notebooks.length > 1 ? "s" : ""} created
           </div>
         )}
       </section>
 
-      {notebookIds.length > 0 && (
+      {notebooks.length > 0 && (
         <section className="rounded-2xl border border-gray-800 bg-gray-900/90 p-5 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
           <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.22em] text-gray-400">
             2 · Generate Studio Suite
           </h3>
-          {notebookIds.length > 1 && (
+          {notebooks.length > 1 && (
             <>
               <label className="mb-1 block text-xs text-gray-400">Select notebook</label>
               <select
@@ -201,9 +201,9 @@ export function StudioControls({
                 onChange={(event) => onSelectedNotebookId(event.target.value)}
                 className="mb-3 w-full rounded-xl border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-500"
               >
-                {notebookIds.map((id) => (
-                  <option key={id} value={id}>
-                    {id}
+                {notebooks.map((notebook) => (
+                  <option key={notebook.notebook_id} value={notebook.notebook_id}>
+                    {notebook.title}
                   </option>
                 ))}
               </select>
@@ -252,7 +252,7 @@ export function StudioControls({
         </section>
       )}
 
-      {notebookIds.length > 0 && (
+      {notebooks.length > 0 && (
         <section className="rounded-2xl border border-gray-800 bg-gray-900/90 p-5 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
           <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.22em] text-gray-400">
             3 · Export Bundle

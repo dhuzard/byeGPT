@@ -10,6 +10,7 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 from backend.app import main as main_module
+from backend.app.cloud import NotebookUploadError
 from backend.app.storage import StorageManager
 
 
@@ -32,6 +33,25 @@ def _build_client(tmp_path: Path) -> TestClient:
 
 
 class TestBackendApi:
+    def test_persona_returns_taxonomy(self, tmp_path, sample_conversations):
+        client = _build_client(tmp_path)
+        source = _write_conversations(tmp_path, sample_conversations)
+
+        with client:
+            with source.open("rb") as handle:
+                response = client.post(
+                    "/persona",
+                    files={"file": ("conversations.json", handle, "application/json")},
+                )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["passport_id"]
+        assert payload["taxonomy"]["categories"]
+        taxonomy_response = client.get(f"/passports/{payload['passport_id']}/taxonomy")
+        assert taxonomy_response.status_code == 200
+        assert taxonomy_response.json()["version"] == "2.0"
+
     def test_convert_returns_topic_laboratory(self, tmp_path, sample_conversations):
         client = _build_client(tmp_path)
         source = _write_conversations(tmp_path, sample_conversations)
@@ -45,6 +65,7 @@ class TestBackendApi:
         assert payload["files_created"] >= 1
         assert payload["topic_laboratory"]["total_conversations"] == len(sample_conversations)
         assert payload["topic_laboratory"]["topics"]
+        assert payload["taxonomy"]["categories"]
 
     def test_demo_upload_and_artifact_job(self, tmp_path, sample_conversations):
         client = _build_client(tmp_path)
@@ -88,6 +109,9 @@ class TestBackendApi:
             assert artifact_response.status_code == 200
             artifact_payload = artifact_response.json()
             assert artifact_payload["download_urls"]
+            notebook_response = client.get(f"/notebooks/{notebook_id}")
+            assert notebook_response.status_code == 200
+            assert notebook_response.json()["kind"] == "master"
 
     def test_search_index_and_query(self, tmp_path, sample_conversations):
         client = _build_client(tmp_path)
@@ -111,3 +135,74 @@ class TestBackendApi:
             )
             assert query_response.status_code == 200
             assert isinstance(query_response.json()["results"], list)
+
+    def test_create_derived_notebook(self, tmp_path, sample_conversations):
+        client = _build_client(tmp_path)
+        source = _write_conversations(tmp_path, sample_conversations)
+
+        with client:
+            with source.open("rb") as handle:
+                convert_response = client.post(
+                    "/convert",
+                    files={"file": ("conversations.json", handle, "application/json")},
+                )
+            output_dir = convert_response.json()["output_dir"]
+
+            with source.open("rb") as handle:
+                passport_response = client.post(
+                    "/persona",
+                    files={"file": ("conversations.json", handle, "application/json")},
+                )
+            passport_payload = passport_response.json()
+            taxonomy = passport_payload["taxonomy"]
+            first_category = taxonomy["categories"][0]
+            first_subcategory = first_category["subcategories"][0]
+
+            derived_response = client.post(
+                "/notebooks/derived",
+                json={
+                    "title": "Focused Notebook",
+                    "passport_id": passport_payload["passport_id"],
+                    "parent_output_dir": output_dir,
+                    "selections": [
+                        {
+                            "category": first_category["slug"],
+                            "subcategory": first_subcategory["slug"],
+                        }
+                    ],
+                },
+            )
+
+            assert derived_response.status_code == 200
+            notebook = derived_response.json()
+            assert notebook["kind"] == "thematic"
+            assert notebook["selection_filters"]
+
+            sources_response = client.get(f"/notebooks/{notebook['notebook_id']}/sources")
+            assert sources_response.status_code == 200
+            assert sources_response.json()["source_count"] >= 1
+
+    def test_upload_returns_gateway_timeout_when_notebooklm_times_out(self, tmp_path, monkeypatch):
+        client = _build_client(tmp_path)
+        main_module._DEMO_MODE = False
+        output_dir = tmp_path / "converted"
+        output_dir.mkdir()
+        (output_dir / "sample.md").write_text("# Sample\n", encoding="utf-8")
+
+        async def _failing_batch_upload(*args, **kwargs):
+            raise NotebookUploadError(
+                "NotebookLM timed out while adding source 'sample'. Try the upload again.",
+                status_code=504,
+            )
+
+        monkeypatch.setattr(main_module, "batch_upload", _failing_batch_upload)
+        monkeypatch.setattr(main_module, "is_authenticated", lambda path: True)
+
+        with client:
+            upload_response = client.post(
+                "/notebooks/upload",
+                json={"notebook_title": "Timeout Notebook", "output_dir": str(output_dir)},
+            )
+
+        assert upload_response.status_code == 504
+        assert "timed out while adding source" in upload_response.json()["detail"]

@@ -1,13 +1,14 @@
 import React, { useCallback, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2, FileArchive } from "lucide-react";
 import * as tus from "tus-js-client";
+import { TaxonomyData } from "../hooks/useNotebook";
 
 const API_BASE = "/api";
 const viteEnv = (import.meta as ImportMeta & {
   env?: Record<string, string | undefined>;
 }).env;
 const TUSD_ENDPOINT =
-  viteEnv?.VITE_TUSD_ENDPOINT?.trim() || "http://localhost:1080/files";
+  viteEnv?.VITE_TUSD_ENDPOINT?.trim() || "http://127.0.0.1:1080/files";
 
 interface ConvertResult {
   output_dir: string;
@@ -15,6 +16,7 @@ interface ConvertResult {
   attachment_count: number;
   conversation_count: number;
   file_paths: string[];
+  taxonomy?: TaxonomyData;
 }
 
 interface IngestionDropzoneProps {

@@ -1,11 +1,16 @@
 import { useMemo, useState } from "react";
 import { Clipboard, ClipboardCheck, FileText, Sparkles, User } from "lucide-react";
+import { TaxonomyData } from "../hooks/useNotebook";
 
 const API_BASE = "/api";
 
 interface PassportCardProps {
   exportFile: File | null;
-  onGenerated?: (passportId: string | null) => void;
+  onGenerated?: (payload: {
+    passportId: string | null;
+    markdown: string;
+    taxonomy: TaxonomyData | null;
+  }) => void;
 }
 
 interface PassportSection {
@@ -42,9 +47,17 @@ export function PassportCard({ exportFile, onGenerated }: PassportCardProps) {
       if (!res.ok) {
         throw new Error(readErrorText(text));
       }
-      const data = JSON.parse(text) as { passport_markdown: string; passport_id?: string };
+      const data = JSON.parse(text) as {
+        passport_markdown: string;
+        passport_id?: string;
+        taxonomy?: TaxonomyData;
+      };
       setMarkdown(data.passport_markdown);
-      onGenerated?.(data.passport_id ?? null);
+      onGenerated?.({
+        passportId: data.passport_id ?? null,
+        markdown: data.passport_markdown,
+        taxonomy: data.taxonomy ?? null,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

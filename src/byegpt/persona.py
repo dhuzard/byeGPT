@@ -11,6 +11,8 @@ from collections import Counter
 from datetime import datetime
 from typing import Any
 
+from byegpt.taxonomy import build_taxonomy
+
 
 def _extract_user_messages(conversations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Extract all user messages from conversations with metadata."""
@@ -363,11 +365,15 @@ def _build_interest_bullets(
     return bullets
 
 
-def generate_persona(conversations: list[dict[str, Any]]) -> str:
+def generate_persona(
+    conversations: list[dict[str, Any]],
+    taxonomy: dict[str, Any] | None = None,
+) -> str:
     """
     Generate a Digital Passport document from a ChatGPT conversation history.
     """
     total_convs = len(conversations)
+    taxonomy = taxonomy or build_taxonomy(conversations)
     user_messages = _extract_user_messages(conversations)
     topics = extract_topics(conversations)
     top_topic_names = [topic for topic, _ in topics[:5]]
@@ -437,6 +443,28 @@ def generate_persona(conversations: list[dict[str, Any]]) -> str:
         lines.append("|---|---|")
         for month, count in activity[-12:]:
             lines.append(f"| {month} | {count} |")
+        lines.append("")
+
+    lines.append("## Knowledge Map")
+    lines.append("")
+    for category in taxonomy.get("categories", [])[:5]:
+        subcategory_names = ", ".join(
+            subcategory["name"]
+            for subcategory in category.get("subcategories", [])[:3]
+        )
+        if subcategory_names:
+            lines.append(
+                f"- {category['name']} ({category['count']} chats) with subcategories: {subcategory_names}."
+            )
+        else:
+            lines.append(f"- {category['name']} ({category['count']} chats).")
+    if taxonomy.get("suggested_notebooks"):
+        lines.append("")
+        lines.append("Suggested thematic notebooks:")
+        lines.append("")
+        for suggestion in taxonomy["suggested_notebooks"][:3]:
+            subcategories = ", ".join(suggestion.get("subcategories", [])) or "General"
+            lines.append(f"- {suggestion['title']}: {subcategories}")
         lines.append("")
 
     lines.append("## Working Prompt")

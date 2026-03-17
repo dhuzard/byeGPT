@@ -17,6 +17,7 @@ if str(_SRC) not in sys.path:
 
 from byegpt.persona import generate_persona  # noqa: E402
 from byegpt.parser import load_conversations  # noqa: E402
+from byegpt.taxonomy import build_taxonomy  # noqa: E402
 
 
 def build_passport(
@@ -40,3 +41,17 @@ def build_passport(
     if zf is not None:
         zf.close()
     return generate_persona(conversations)
+
+
+def build_passport_bundle(
+    input_path: Path,
+) -> dict[str, Any]:
+    input_path = Path(input_path)
+    conversations, zf = load_conversations(input_path)
+    if zf is not None:
+        zf.close()
+    taxonomy = build_taxonomy(conversations)
+    return {
+        "markdown": generate_persona(conversations, taxonomy=taxonomy),
+        "taxonomy": taxonomy,
+    }

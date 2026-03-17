@@ -4,8 +4,10 @@ backend/app/cloud.py — notebooklm-py wrapper for real NotebookLM mode.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 import tempfile
 from pathlib import Path
 from typing import Any, TypeVar
@@ -14,7 +16,21 @@ logger = logging.getLogger(__name__)
 
 _MAX_SOURCES = 50
 _MAX_TEXT_SOURCE_CHARS = 500_000
+_DEFAULT_CLIENT_TIMEOUT_SECONDS = float(os.environ.get("BYEGPT_NOTEBOOKLM_TIMEOUT_SECONDS", "90"))
+_DEFAULT_ADD_SOURCE_ATTEMPTS = max(
+    1,
+    int(os.environ.get("BYEGPT_NOTEBOOKLM_ADD_SOURCE_ATTEMPTS", "3")),
+)
+_ADD_SOURCE_RETRY_BASE_DELAY_SECONDS = float(
+    os.environ.get("BYEGPT_NOTEBOOKLM_ADD_SOURCE_RETRY_DELAY_SECONDS", "2")
+)
 T = TypeVar("T")
+
+
+class NotebookUploadError(RuntimeError):
+    def __init__(self, message: str, *, status_code: int = 502):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _chunk_items(items: list[T], chunk_size: int = _MAX_SOURCES) -> list[list[T]]:
@@ -68,7 +84,76 @@ async def _get_client(cookies_path: Path):
             "notebooklm-py is required for cloud features. Install it with: pip install notebooklm-py"
         ) from exc
 
-    return await NotebookLMClient.from_storage(str(cookies_path))
+    return await NotebookLMClient.from_storage(
+        str(cookies_path),
+        timeout=_DEFAULT_CLIENT_TIMEOUT_SECONDS,
+    )
+
+
+def _is_retryable_add_source_error(exc: Exception) -> bool:
+    try:
+        from notebooklm.exceptions import NetworkError, RPCTimeoutError, SourceAddError  # type: ignore[import]
+    except ImportError:  # pragma: no cover - dependency issue
+        return False
+
+    if isinstance(exc, RPCTimeoutError | NetworkError):
+        return True
+
+    if isinstance(exc, SourceAddError):
+        cause = getattr(exc, "cause", None)
+        return isinstance(cause, RPCTimeoutError | NetworkError)
+
+    return False
+
+
+def _build_upload_error(exc: Exception, *, source_title: str) -> NotebookUploadError:
+    if _is_retryable_add_source_error(exc):
+        return NotebookUploadError(
+            f"NotebookLM timed out while adding source '{source_title}'. Try the upload again.",
+            status_code=504,
+        )
+
+    return NotebookUploadError(
+        f"NotebookLM failed while adding source '{source_title}': {exc}",
+        status_code=502,
+    )
+
+
+async def _add_text_source_with_retry(
+    client: Any,
+    notebook_id: str,
+    source_title: str,
+    markdown: str,
+) -> None:
+    last_error: Exception | None = None
+
+    for attempt in range(1, _DEFAULT_ADD_SOURCE_ATTEMPTS + 1):
+        try:
+            await client.sources.add_text(
+                notebook_id,
+                title=source_title,
+                content=markdown,
+                wait=True,
+            )
+            return
+        except Exception as exc:
+            last_error = exc
+            retryable = _is_retryable_add_source_error(exc)
+            if not retryable or attempt >= _DEFAULT_ADD_SOURCE_ATTEMPTS:
+                break
+
+            delay_seconds = _ADD_SOURCE_RETRY_BASE_DELAY_SECONDS * attempt
+            logger.warning(
+                "Retrying NotebookLM source upload for '%s' after attempt %d/%d failed: %s",
+                source_title,
+                attempt,
+                _DEFAULT_ADD_SOURCE_ATTEMPTS,
+                exc,
+            )
+            await asyncio.sleep(delay_seconds)
+
+    assert last_error is not None  # pragma: no cover - loop always sets this on failure
+    raise _build_upload_error(last_error, source_title=source_title) from last_error
 
 
 async def batch_upload(
@@ -88,12 +173,7 @@ async def batch_upload(
             notebook = await client.notebooks.create(title)
 
             for source_title, markdown in chunk:
-                await client.sources.add_text(
-                    notebook.id,
-                    title=source_title,
-                    content=markdown,
-                    wait=True,
-                )
+                await _add_text_source_with_retry(client, notebook.id, source_title, markdown)
 
             notebook_ids.append(notebook.id)
             logger.info("Created notebook %s", notebook.id)
