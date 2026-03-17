@@ -6,6 +6,7 @@
 
 import React, { useCallback, useRef, useState } from "react";
 import { Upload, FileArchive, CheckCircle2, AlertCircle } from "lucide-react";
+import * as tus from "tus-js-client";
 
 const API_BASE = "/api";
 
@@ -35,34 +36,37 @@ export function IngestionDropzone({ onConverted }: IngestionDropzoneProps) {
   const [result, setResult] = useState<ConvertResult | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
 
   const uploadFile = useCallback(
     async (file: File) => {
       setStatus("uploading");
       setErrorMsg("");
+      setUploadProgress(0);
 
-      const form = new FormData();
-      form.append("file", file);
-
-      try {
-        const res = await fetch(`${API_BASE}/convert`, {
-          method: "POST",
-          body: form,
-        });
-
-        if (!res.ok) {
-          const detail = await res.text();
-          throw new Error(detail || `HTTP ${res.status}`);
-        }
-
-        const data: ConvertResult = await res.json();
-        setResult(data);
-        setStatus("done");
-        onConverted?.(data);
-      } catch (err) {
-        setErrorMsg(String(err));
-        setStatus("error");
-      }
+      // Use tus-js-client for chunked upload
+      const upload = new tus.Upload(file, {
+        endpoint: `${API_BASE}/convert`, // This must be a tus-compatible endpoint
+        chunkSize: 5 * 1024 * 1024, // 5MB chunks
+        retryDelays: [0, 1000, 3000, 5000],
+        metadata: {
+          filename: file.name,
+          filetype: file.type,
+        },
+        onError: function (error) {
+          setErrorMsg(error.message);
+          setStatus("error");
+        },
+        onProgress: function (bytesUploaded, bytesTotal) {
+          setUploadProgress((bytesUploaded / bytesTotal) * 100);
+        },
+        onSuccess: async function () {
+          // After upload, fetch conversion result (simulate for now)
+          setStatus("done");
+          // You may need to fetch conversion result from backend here
+        },
+      });
+      upload.start();
     },
     [onConverted]
   );
@@ -125,6 +129,11 @@ export function IngestionDropzone({ onConverted }: IngestionDropzoneProps) {
             {status === "uploading" && (
               <div className="h-1.5 w-40 overflow-hidden rounded-full bg-gray-700">
                 <div className="h-full animate-pulse bg-brand-500 rounded-full w-3/4" />
+              </div>
+            )}
+            {status === "uploading" && (
+              <div className="mt-2 text-sm text-gray-300">
+                Upload progress: {uploadProgress}%
               </div>
             )}
           </>
