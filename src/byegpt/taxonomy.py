@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import datetime
 from typing import Any
 
@@ -109,35 +109,62 @@ def conversation_uid(conversation: dict[str, Any], index: int) -> str:
     return f"conversation_{index + 1:05d}"
 
 
-def _tokenize(text: str) -> list[str]:
-    return [
-        token
-        for token in re.findall(r"[a-zA-ZÀ-ÿ]{3,}", text.lower())
-        if token not in _STOP_WORDS
-    ]
+def extract_topics(conversations: list[dict[str, Any]], top_n: int = 20) -> list[tuple[str, int]]:
+    word_counts: Counter[str] = Counter()
+    for conversation in conversations:
+        title = conversation.get("title") or ""
+        words = re.findall(r"[a-zA-ZÀ-ÿ]{3,}", title.lower())
+        for word in words:
+            if word not in _STOP_WORDS:
+                word_counts[word] += 1
+    return word_counts.most_common(top_n)
 
 
-def _sample_message_text(conversation: dict[str, Any], limit: int = 1200) -> str:
-    chunks: list[str] = []
+def extract_subtopics(
+    conversations: list[dict[str, Any]],
+    topics: list[str],
+    top_n: int = 3,
+) -> dict[str, list[tuple[str, int]]]:
+    result: dict[str, list[tuple[str, int]]] = {}
+    for topic in topics:
+        topic_lower = topic.lower()
+        filtered = [
+            conversation
+            for conversation in conversations
+            if topic_lower in (conversation.get("title") or "").lower()
+        ]
+
+        word_counts: Counter[str] = Counter()
+        for conversation in filtered:
+            title = conversation.get("title") or ""
+            words = re.findall(r"[a-zA-ZÀ-ÿ]{3,}", title.lower())
+            for word in words:
+                if word not in _STOP_WORDS and word != topic_lower:
+                    word_counts[word] += 1
+
+        result[topic] = word_counts.most_common(top_n)
+
+    return result
+
+
+def _sample_message_text(conversation: dict[str, Any], limit: int = 300) -> str:
     mapping = conversation.get("mapping", {})
+    snippets: list[str] = []
     for node in mapping.values():
         message = node.get("message")
         if not message:
             continue
-        role = message.get("author", {}).get("role")
-        if role not in {"user", "assistant"}:
-            continue
         parts = message.get("content", {}).get("parts", [])
         for part in parts:
             if isinstance(part, str) and part.strip():
-                chunks.append(part.strip())
-                if sum(len(chunk) for chunk in chunks) >= limit:
-                    return "\n".join(chunks)[:limit]
-    return "\n".join(chunks)[:limit]
+                snippets.append(part.strip())
+                if sum(len(snippet) for snippet in snippets) >= limit:
+                    return "\n".join(snippets)[:limit]
+    return "\n".join(snippets)[:limit]
 
 
-def _date_span(conversations: list[dict[str, Any]]) -> dict[str, str | None]:
-    timestamps = [conv.get("create_time") for conv in conversations if conv.get("create_time")]
+def _date_span(items: list[dict[str, Any]]) -> dict[str, str | None]:
+    timestamps = [item.get("create_time") for item in items if item.get("create_time")]
     if not timestamps:
         return {"start": None, "end": None}
     return {
@@ -146,170 +173,195 @@ def _date_span(conversations: list[dict[str, Any]]) -> dict[str, str | None]:
     }
 
 
-def _conversation_record(conversation: dict[str, Any], index: int) -> dict[str, Any]:
-    title = (conversation.get("title") or "Untitled conversation").strip()
-    sample_text = _sample_message_text(conversation)
-    return {
-        "conversation_id": conversation_uid(conversation, index),
-        "title": title,
-        "title_tokens": _tokenize(title),
-        "sample_text": sample_text,
-        "sample_tokens": _tokenize(sample_text),
-        "create_time": conversation.get("create_time"),
-        "example_prompt": sample_text.splitlines()[0][:220] if sample_text else title,
-    }
-
-
-def _top_category_terms(records: list[dict[str, Any]], limit: int = 8) -> list[str]:
-    counts: Counter[str] = Counter()
-    for record in records:
-        for token in record["title_tokens"]:
-            counts[token] += 2
-        for token in record["sample_tokens"][:24]:
-            counts[token] += 1
-    return [token for token, _ in counts.most_common(limit)]
-
-
-def _assign_category(record: dict[str, Any], categories: list[str]) -> tuple[str, float, str]:
-    scores: dict[str, int] = {}
-    combined = record["title_tokens"] + record["sample_tokens"]
-    for category in categories:
-        score = 0
-        score += record["title_tokens"].count(category) * 3
-        score += combined.count(category)
-        if score:
-            scores[category] = score
-
-    if not scores:
-        return "uncategorized", 0.35, "No dominant recurring keyword; placed in Uncategorized."
-
-    best_category, best_score = max(scores.items(), key=lambda item: item[1])
-    confidence = min(0.95, 0.45 + best_score * 0.1)
-    return (
-        best_category,
-        round(confidence, 2),
-        "Assigned from recurring title keywords reinforced by sampled conversation text.",
-    )
+def _slugify(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_") or "general"
 
 
 def build_taxonomy(conversations: list[dict[str, Any]]) -> dict[str, Any]:
-    records = [_conversation_record(conversation, index) for index, conversation in enumerate(conversations)]
-    top_categories = _top_category_terms(records)
+    topics = extract_topics(conversations, top_n=8)
+    topic_names = [topic for topic, _ in topics]
+    subtopics = extract_subtopics(conversations, topic_names, top_n=4)
 
-    category_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    category_meta: dict[str, dict[str, Any]] = {}
+    categories: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
 
-    for record in records:
-        category, confidence, explanation = _assign_category(record, top_categories)
-        category_groups[category].append(record)
-        category_meta.setdefault(
-            category,
+    for topic, topic_count in topics:
+        topic_lower = topic.lower()
+        category_conversations = [
             {
-                "confidence": confidence,
-                "explanation": explanation,
-            },
-        )
+                **conversation,
+                "_conversation_id": conversation_uid(conversation, index),
+            }
+            for index, conversation in enumerate(conversations)
+            if topic_lower in (conversation.get("title") or "").lower()
+        ]
+        if not category_conversations:
+            continue
 
-    categories_payload: list[dict[str, Any]] = []
-    for category_name, category_records in sorted(
-        category_groups.items(),
-        key=lambda item: (-len(item[1]), item[0]),
-    ):
-        subtopic_counts: Counter[str] = Counter()
-        for record in category_records:
-            for token in record["title_tokens"] + record["sample_tokens"][:20]:
-                if token == category_name or token in _STOP_WORDS:
-                    continue
-                subtopic_counts[token] += 1
-
-        subtopic_names = [token for token, _ in subtopic_counts.most_common(4)]
-        subcategories_map: dict[str, list[dict[str, Any]]] = defaultdict(list)
-
-        for record in category_records:
-            assigned_subcategory = "general"
-            for token in subtopic_names:
-                if token in record["title_tokens"] or token in record["sample_tokens"]:
-                    assigned_subcategory = token
-                    break
-            subcategories_map[assigned_subcategory].append(record)
-
-        subcategories_payload: list[dict[str, Any]] = []
-        for subcategory_name, subcategory_records in sorted(
-            subcategories_map.items(),
-            key=lambda item: (-len(item[1]), item[0]),
-        ):
-            example_titles = [record["title"] for record in subcategory_records[:4]]
-            conversation_ids = [record["conversation_id"] for record in subcategory_records]
-            example_prompts = [
-                record["example_prompt"]
-                for record in subcategory_records
-                if record["example_prompt"]
-            ][:3]
-            subcategory_conversations = [
-                {
-                    "conversation_id": record["conversation_id"],
-                    "title": record["title"],
-                }
-                for record in subcategory_records
+        subcategory_payload: list[dict[str, Any]] = []
+        remaining = category_conversations[:]
+        for subtopic, _sub_count in subtopics.get(topic, []):
+            subtopic_lower = subtopic.lower()
+            matched = [
+                conversation
+                for conversation in remaining
+                if subtopic_lower in (conversation.get("title") or "").lower()
             ]
-            subcategories_payload.append(
+            if not matched:
+                continue
+
+            matched_ids = [conversation["_conversation_id"] for conversation in matched]
+            used_ids.update(matched_ids)
+            subcategory_payload.append(
                 {
-                    "name": subcategory_name.replace("_", " ").title(),
-                    "slug": subcategory_name,
-                    "count": len(subcategory_records),
-                    "conversation_ids": conversation_ids,
-                    "conversations": subcategory_conversations,
-                    "representative_titles": example_titles,
-                    "example_prompts": example_prompts,
-                    "date_span": _date_span(
-                        [
-                            {"create_time": record["create_time"]}
-                            for record in subcategory_records
-                        ]
-                    ),
-                    "confidence": round(
-                        min(0.95, 0.5 + len(subcategory_records) * 0.08),
-                        2,
-                    ),
-                    "explanation": (
-                        "Grouped by repeated secondary keywords inside the category."
-                        if subcategory_name != "general"
-                        else "Fallback bucket for category items without a stronger secondary term."
-                    ),
+                    "name": subtopic.title(),
+                    "slug": _slugify(subtopic),
+                    "count": len(matched),
+                    "conversation_ids": matched_ids,
+                    "conversations": [
+                        {
+                            "conversation_id": conversation["_conversation_id"],
+                            "title": conversation.get("title") or "Untitled conversation",
+                        }
+                        for conversation in matched
+                    ],
+                    "representative_titles": [
+                        conversation.get("title") or "Untitled conversation"
+                        for conversation in matched[:4]
+                    ],
+                    "example_prompts": [
+                        _sample_message_text(conversation) or (conversation.get("title") or "Untitled conversation")
+                        for conversation in matched[:3]
+                    ],
+                    "date_span": _date_span(matched),
+                    "confidence": 0.8,
+                    "explanation": "Derived from recurring co-occurring title keywords within the main Core Interest.",
+                }
+            )
+            remaining = [
+                conversation
+                for conversation in remaining
+                if conversation["_conversation_id"] not in set(matched_ids)
+            ]
+
+        if remaining:
+            remaining_ids = [conversation["_conversation_id"] for conversation in remaining]
+            used_ids.update(remaining_ids)
+            subcategory_payload.append(
+                {
+                    "name": "General",
+                    "slug": "general",
+                    "count": len(remaining),
+                    "conversation_ids": remaining_ids,
+                    "conversations": [
+                        {
+                            "conversation_id": conversation["_conversation_id"],
+                            "title": conversation.get("title") or "Untitled conversation",
+                        }
+                        for conversation in remaining
+                    ],
+                    "representative_titles": [
+                        conversation.get("title") or "Untitled conversation"
+                        for conversation in remaining[:4]
+                    ],
+                    "example_prompts": [
+                        _sample_message_text(conversation) or (conversation.get("title") or "Untitled conversation")
+                        for conversation in remaining[:3]
+                    ],
+                    "date_span": _date_span(remaining),
+                    "confidence": 0.55,
+                    "explanation": "Conversations matched the Core Interest without a stronger subtopic title signal.",
                 }
             )
 
-        categories_payload.append(
+        categories.append(
             {
-                "name": category_name.replace("_", " ").title(),
-                "slug": category_name,
-                "count": len(category_records),
-                "date_span": _date_span(
-                    [{"create_time": record["create_time"]} for record in category_records]
-                ),
-                "representative_titles": [record["title"] for record in category_records[:5]],
-                "confidence": category_meta[category_name]["confidence"],
-                "explanation": category_meta[category_name]["explanation"],
-                "subcategories": subcategories_payload,
+                "name": topic.title(),
+                "slug": _slugify(topic),
+                "count": len(category_conversations),
+                "date_span": _date_span(category_conversations),
+                "representative_titles": [
+                    conversation.get("title") or "Untitled conversation"
+                    for conversation in category_conversations[:5]
+                ],
+                "confidence": 0.85,
+                "explanation": "Derived from the same title-frequency extraction used in the passport Core Interests section.",
+                "subcategories": subcategory_payload,
+            }
+        )
+
+    uncategorized = []
+    for index, conversation in enumerate(conversations):
+        conversation_id = conversation_uid(conversation, index)
+        if conversation_id not in used_ids:
+            uncategorized.append(
+                {
+                    **conversation,
+                    "_conversation_id": conversation_id,
+                }
+            )
+
+    if uncategorized:
+        categories.append(
+            {
+                "name": "Uncategorized",
+                "slug": "uncategorized",
+                "count": len(uncategorized),
+                "date_span": _date_span(uncategorized),
+                "representative_titles": [
+                    conversation.get("title") or "Untitled conversation"
+                    for conversation in uncategorized[:5]
+                ],
+                "confidence": 0.35,
+                "explanation": "No strong Core Interest title keyword matched these conversations.",
+                "subcategories": [
+                    {
+                        "name": "General",
+                        "slug": "general",
+                        "count": len(uncategorized),
+                        "conversation_ids": [
+                            conversation["_conversation_id"] for conversation in uncategorized
+                        ],
+                        "conversations": [
+                            {
+                                "conversation_id": conversation["_conversation_id"],
+                                "title": conversation.get("title") or "Untitled conversation",
+                            }
+                            for conversation in uncategorized
+                        ],
+                        "representative_titles": [
+                            conversation.get("title") or "Untitled conversation"
+                            for conversation in uncategorized[:4]
+                        ],
+                        "example_prompts": [
+                            _sample_message_text(conversation) or (conversation.get("title") or "Untitled conversation")
+                            for conversation in uncategorized[:3]
+                        ],
+                        "date_span": _date_span(uncategorized),
+                        "confidence": 0.35,
+                        "explanation": "Fallback bucket for conversations outside the extracted Core Interests.",
+                    }
+                ],
             }
         )
 
     suggestions = []
-    for category in categories_payload[:3]:
-        top_subcategories = [sub["name"] for sub in category["subcategories"][:2]]
+    for category in categories[:3]:
         suggestions.append(
             {
                 "title": f"{category['name']} Focus Notebook",
                 "category": category["name"],
-                "subcategories": top_subcategories,
+                "subcategories": [
+                    subcategory["name"] for subcategory in category.get("subcategories", [])[:2]
+                ],
             }
         )
 
     return {
         "version": "2.0",
         "total_conversations": len(conversations),
-        "generated_from": "hybrid_metadata_content",
+        "generated_from": "core_interests_title_taxonomy",
         "date_span": _date_span(conversations),
-        "categories": categories_payload,
+        "categories": categories,
         "suggested_notebooks": suggestions,
     }
