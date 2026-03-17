@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Install Python dependencies first (cache layer)
-COPY requirements.txt .
+COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Chromium for Playwright
@@ -32,6 +32,6 @@ COPY src ./src
 COPY core ./core
 
 # Copy the backend application code
-COPY . .
+COPY backend/app ./app
 
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
