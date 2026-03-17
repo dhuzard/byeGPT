@@ -252,7 +252,7 @@ export function useNotebook() {
   const audioUrl = useMemo(
     () => {
       const downloadUrls = state.artifacts.find((artifact) => artifact.type === "audio")?.download_urls;
-      return withApiBase(downloadUrls?.mp3 ?? downloadUrls?.wav ?? null);
+      return withApiBase(downloadUrls?.mp3 ?? downloadUrls?.mp4 ?? downloadUrls?.wav ?? null);
     },
     [state.artifacts]
   );

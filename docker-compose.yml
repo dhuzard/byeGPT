@@ -17,7 +17,7 @@ services:
     environment:
       - BYEGPT_STORAGE=/app/.byegpt
       - BYEGPT_TUSD_UPLOAD_DIR=/app/.uploads
-      - BYEGPT_DEMO_MODE=true
+      - BYEGPT_DEMO_MODE=${BYEGPT_DEMO_MODE:-true}
       - CORS_ORIGINS=http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000
     restart: unless-stopped
     healthcheck:

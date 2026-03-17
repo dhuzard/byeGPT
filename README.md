@@ -50,6 +50,8 @@ Your conversation history is a goldmine. Whether you just want a quick backup to
 *You want a point-and-click interface that handles everything — conversion, NotebookLM upload, and AI artifact generation — without touching the terminal.*
 
 1. Start the Studio with `docker compose up` and open `http://127.0.0.1:5173` (use `http://localhost:5173` only if it resolves correctly on your machine).
+2. By default the Docker stack runs in demo mode for easy local testing.
+3. For real NotebookLM mode, start the stack with `BYEGPT_DEMO_MODE=false docker compose up`.
 2. Drag-and-drop your `.zip` export onto the **Ingestion Dropzone** — conversion starts immediately.
 3. Click **Generate Digital Passport** to synthesize your AI persona, then copy it to the clipboard with one click.
 4. Use the **Studio Controls** sidebar to batch-upload your Markdown files to NotebookLM, then generate a mind map, audio overview, or slide deck directly from the dashboard.
@@ -542,3 +544,97 @@ MIT — see [LICENSE](LICENSE) for details.
   Made with ❤️ for everyone building a personal AI knowledge base<br/>
   <sub>byeGPT v3.0.0 "Studio"</sub>
 </p>
+### Real NotebookLM Mode
+
+The Docker stack defaults to demo mode because interactive Google login from inside a Linux container is unreliable on non-X11 hosts.
+
+To use real NotebookLM:
+
+```bash
+BYEGPT_DEMO_MODE=false docker compose up --build
+```
+
+Then use one of these two paths:
+
+1. Recommended: place a valid Playwright session file at `.byegpt/storage.json` before opening the dashboard.
+2. Alternative: run the backend on the host OS instead of Docker, complete `/auth/login` there, and let it write `.byegpt/storage.json`.
+
+If you run in real mode without a valid session file, NotebookLM actions will return:
+
+```text
+Interactive NotebookLM login is unavailable in Docker without an X server.
+```
+
+That is expected in containerized mode on many Windows/macOS setups.
+
+### Create `.byegpt/storage.json` On The Host
+
+If you want a real NotebookLM session without fighting the Docker browser limitation, run the backend on the host once:
+
+Windows:
+
+```powershell
+.\scripts\start_host_backend.ps1
+```
+
+Or:
+
+```cmd
+scripts\start_host_backend.cmd
+```
+
+macOS / Linux / WSL:
+
+```bash
+./scripts/start_host_backend.sh
+```
+
+What the script does:
+
+1. Creates `.venv-backend`
+2. Installs `backend/requirements.txt`
+3. Installs Playwright Chromium
+4. Starts the backend in real mode on `http://127.0.0.1:8000`
+
+Then:
+
+1. Open `http://127.0.0.1:8000/docs`
+2. Run `POST /auth/login`
+3. Complete the Google / NotebookLM sign-in in the browser window
+4. Confirm `.byegpt/storage.json` now exists
+5. Stop the host backend
+6. Start Docker in real mode:
+
+```bash
+BYEGPT_DEMO_MODE=false docker compose up --build
+```
+
+The Docker backend will reuse `.byegpt/storage.json`.
+
+### If Google Rejects The Playwright Login
+
+Google may reject even a real Chrome instance when Playwright launches it.
+
+If that happens, use Chrome manually and capture the session instead:
+
+1. Start Chrome with remote debugging:
+
+```powershell
+.\scripts\start_chrome_debug.ps1
+```
+
+2. In that Chrome window, sign in to NotebookLM manually and make sure it works.
+3. In a second terminal, capture the session into `.byegpt/storage.json`:
+
+```powershell
+.\scripts\capture_chrome_session.ps1
+```
+
+4. Press Enter in the capture terminal after NotebookLM is open in Chrome.
+5. Start Docker in real mode:
+
+```bash
+BYEGPT_DEMO_MODE=false docker compose up --build
+```
+
+This path avoids automating the Google sign-in itself.

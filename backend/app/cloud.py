@@ -1,58 +1,33 @@
 """
-backend/app/cloud.py — notebooklm-py wrapper (the Studio Engine).
-
-Wraps the ``notebooklm-py`` library and normalises artifact payloads into a
-stable shape for the API layer.
+backend/app/cloud.py — notebooklm-py wrapper for real NotebookLM mode.
 """
 
 from __future__ import annotations
 
-import asyncio
+import json
 import logging
+import tempfile
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Maximum sources NotebookLM accepts per notebook
 _MAX_SOURCES = 50
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _chunk_paths(paths: list[Path], chunk_size: int = _MAX_SOURCES) -> list[list[Path]]:
-    """Split a list of paths into chunks of at most ``chunk_size``."""
-    return [paths[i : i + chunk_size] for i in range(0, len(paths), chunk_size)]
+    return [paths[index : index + chunk_size] for index in range(0, len(paths), chunk_size)]
 
 
-# ---------------------------------------------------------------------------
-# NotebookLM client factory
-# ---------------------------------------------------------------------------
-
-
-def _get_client(cookies_path: Path) -> "notebooklm.Client":  # type: ignore[name-defined]
-    """
-    Instantiate a notebooklm-py client using the saved Playwright cookies.
-
-    Raises ImportError if notebooklm-py is not installed.
-    """
+async def _get_client(cookies_path: Path):
     try:
-        import notebooklm  # type: ignore[import]
-    except ImportError as exc:
+        from notebooklm import NotebookLMClient  # type: ignore[import]
+    except ImportError as exc:  # pragma: no cover - dependency issue
         raise ImportError(
-            "notebooklm-py is required for cloud features. "
-            "Install it with: pip install notebooklm-py"
+            "notebooklm-py is required for cloud features. Install it with: pip install notebooklm-py"
         ) from exc
 
-    return notebooklm.Client.from_cookie_file(str(cookies_path))
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+    return await NotebookLMClient.from_storage(str(cookies_path))
 
 
 async def batch_upload(
@@ -60,26 +35,21 @@ async def batch_upload(
     notebook_title: str,
     cookies_path: Path,
 ) -> list[str]:
-    """
-    Upload Markdown files to NotebookLM in batches of up to 50 sources.
-
-    Returns a list of created notebook IDs.
-    """
-    client = _get_client(cookies_path)
-    chunks = _chunk_paths(markdown_files)
     notebook_ids: list[str] = []
+    chunks = _chunk_paths(markdown_files)
 
-    for idx, chunk in enumerate(chunks, 1):
-        title = notebook_title if len(chunks) == 1 else f"{notebook_title} — Part {idx}"
-        logger.info("Creating notebook '%s' with %d sources…", title, len(chunk))
+    client = await _get_client(cookies_path)
+    async with client:
+        for index, chunk in enumerate(chunks, start=1):
+            title = notebook_title if len(chunks) == 1 else f"{notebook_title} — Part {index}"
+            logger.info("Creating notebook '%s' with %d sources", title, len(chunk))
+            notebook = await client.notebooks.create(title)
 
-        notebook = await asyncio.to_thread(
-            client.notebooks.create,
-            title=title,
-            sources=[str(p) for p in chunk],
-        )
-        notebook_ids.append(notebook.id)
-        logger.info("Created notebook %s", notebook.id)
+            for path in chunk:
+                await client.sources.add_file(notebook.id, path, wait=True)
+
+            notebook_ids.append(notebook.id)
+            logger.info("Created notebook %s", notebook.id)
 
     return notebook_ids
 
@@ -88,28 +58,28 @@ async def generate_mind_map(
     notebook_id: str,
     cookies_path: Path,
 ) -> dict[str, Any]:
-    """
-    Trigger mind-map generation for a notebook and return the JSON payload.
+    client = await _get_client(cookies_path)
+    async with client:
+        result = await client.artifacts.generate_mind_map(notebook_id=notebook_id)
+        note_id = result.get("note_id")
 
-    The JSON can be passed directly to the React ``MindMap`` component.
-    """
-    client = _get_client(cookies_path)
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
 
-    logger.info("Generating mind map for notebook %s…", notebook_id)
-    artifact = await asyncio.to_thread(
-        client.artifacts.generate_mind_map,
-        notebook_id=notebook_id,
-    )
+        try:
+            await client.artifacts.download_mind_map(
+                notebook_id=notebook_id,
+                artifact_id=note_id,
+                output_path=str(tmp_path),
+            )
+            data = json.loads(tmp_path.read_text(encoding="utf-8"))
+        finally:
+            tmp_path.unlink(missing_ok=True)
 
-    mind_map_data = await asyncio.to_thread(
-        client.artifacts.download_mind_map,
-        artifact_id=artifact.id,
-    )
-
-    return {
-        "artifact_id": artifact.id,
-        "data": mind_map_data,  # type: ignore[dict-item]
-    }
+        return {
+            "artifact_id": note_id,
+            "data": data,
+        }
 
 
 async def generate_audio_overview(
@@ -117,107 +87,111 @@ async def generate_audio_overview(
     cookies_path: Path,
     output_path: Path | None = None,
 ) -> dict[str, Any]:
-    """
-    Generate an Audio Overview for the notebook and save it as an MP3.
+    client = await _get_client(cookies_path)
+    async with client:
+        status = await client.artifacts.generate_audio(notebook_id=notebook_id)
+        await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+        artifact = await _latest_artifact(client, notebook_id, "audio")
 
-    Returns the path to the saved MP3 file.
-    """
-    client = _get_client(cookies_path)
+        if output_path is None:
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                output_path = Path(tmp.name)
+        else:
+            output_path = Path(output_path)
 
-    logger.info("Generating audio overview for notebook %s…", notebook_id)
-    artifact = await asyncio.to_thread(
-        client.artifacts.generate_audio_overview,
-        notebook_id=notebook_id,
-    )
-
-    audio_bytes = await asyncio.to_thread(
-        client.artifacts.download_audio,
-        artifact_id=artifact.id,
-    )
-
-    if output_path is not None:
-        output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(audio_bytes)
-        logger.info("Audio overview saved to %s", output_path)
+        await client.artifacts.download_audio(
+            notebook_id=notebook_id,
+            artifact_id=artifact.id,
+            output_path=str(output_path),
+        )
+        audio_bytes = output_path.read_bytes()
 
-    return {
-        "artifact_id": artifact.id,
-        "bytes": audio_bytes,
-    }
+        return {
+            "artifact_id": artifact.id,
+            "bytes": audio_bytes,
+        }
 
 
 async def generate_slides(
     notebook_id: str,
     cookies_path: Path,
 ) -> dict[str, Any]:
-    """
-    Generate presentation slides for the notebook.
+    client = await _get_client(cookies_path)
+    async with client:
+        status = await client.artifacts.generate_slide_deck(notebook_id=notebook_id)
+        await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+        artifact = await _latest_artifact(client, notebook_id, "slide_deck")
 
-    Returns a list of slide dicts (title + content).
-    """
-    client = _get_client(cookies_path)
+        slides = [
+            {
+                "title": artifact.title or "Slide deck generated",
+                "content": "Slide deck generated in NotebookLM. Use PPTX or PDF export for full content.",
+            }
+        ]
 
-    logger.info("Generating slides for notebook %s…", notebook_id)
-    artifact = await asyncio.to_thread(
-        client.artifacts.generate_slides,
-        notebook_id=notebook_id,
-    )
+        with tempfile.NamedTemporaryFile(suffix=".pptx", delete=False) as pptx_tmp:
+            pptx_path = Path(pptx_tmp.name)
+        try:
+            await client.artifacts.download_slide_deck(
+                notebook_id=notebook_id,
+                artifact_id=artifact.id,
+                output_path=str(pptx_path),
+                output_format="pptx",
+            )
+            pptx_bytes = pptx_path.read_bytes()
+        finally:
+            pptx_path.unlink(missing_ok=True)
 
-    slides = await asyncio.to_thread(
-        client.artifacts.download_slides,
-        artifact_id=artifact.id,
-    )
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as pdf_tmp:
+            pdf_path = Path(pdf_tmp.name)
+        try:
+            await client.artifacts.download_slide_deck(
+                notebook_id=notebook_id,
+                artifact_id=artifact.id,
+                output_path=str(pdf_path),
+                output_format="pdf",
+            )
+            pdf_bytes = pdf_path.read_bytes()
+        finally:
+            pdf_path.unlink(missing_ok=True)
 
-    return {
-        "artifact_id": artifact.id,
-        "slides": slides,  # type: ignore[dict-item]
-    }
+        return {
+            "artifact_id": artifact.id,
+            "slides": slides,
+            "pptx_bytes": pptx_bytes,
+            "pdf_bytes": pdf_bytes,
+            "title": artifact.title,
+        }
 
 
 async def generate_quiz(
     notebook_id: str,
     cookies_path: Path,
 ) -> dict[str, Any]:
-    """
-    Generate quiz data for the notebook when supported by notebooklm-py.
+    client = await _get_client(cookies_path)
+    async with client:
+        status = await client.artifacts.generate_quiz(notebook_id=notebook_id)
+        await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+        artifact = await _latest_artifact(client, notebook_id, "quiz")
 
-    Falls back to a slide-derived quiz when the upstream client does not expose
-    quiz APIs.
-    """
-    client = _get_client(cookies_path)
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as json_tmp:
+            json_path = Path(json_tmp.name)
+        try:
+            await client.artifacts.download_quiz(
+                notebook_id=notebook_id,
+                artifact_id=artifact.id,
+                output_path=str(json_path),
+                output_format="json",
+            )
+            quiz = json.loads(json_path.read_text(encoding="utf-8"))
+        finally:
+            json_path.unlink(missing_ok=True)
 
-    if hasattr(client.artifacts, "generate_quiz") and hasattr(client.artifacts, "download_quiz"):
-        logger.info("Generating quiz for notebook %s…", notebook_id)
-        artifact = await asyncio.to_thread(
-            client.artifacts.generate_quiz,
-            notebook_id=notebook_id,
-        )
-        quiz = await asyncio.to_thread(
-            client.artifacts.download_quiz,
-            artifact_id=artifact.id,
-        )
         return {
             "artifact_id": artifact.id,
-            "quiz": quiz,  # type: ignore[dict-item]
+            "quiz": quiz,
         }
-
-    slides_result = await generate_slides(notebook_id=notebook_id, cookies_path=cookies_path)
-    slides = slides_result["slides"]
-    quiz = {
-        "title": "Notebook Review Quiz",
-        "questions": [
-            {
-                "question": f"What is the main point of '{slide.get('title', f'Slide {index + 1}')}'?",
-                "answer": slide.get("content", ""),
-            }
-            for index, slide in enumerate(slides[:5])
-        ],
-    }
-    return {
-        "artifact_id": slides_result["artifact_id"],
-        "quiz": quiz,
-    }
 
 
 async def revise_slide(
@@ -227,19 +201,32 @@ async def revise_slide(
     revision_prompt: str,
     cookies_path: Path,
 ) -> dict[str, Any]:
-    """
-    Send a revision prompt for a specific slide.
+    client = await _get_client(cookies_path)
+    async with client:
+        status = await client.artifacts.revise_slide(
+            notebook_id=notebook_id,
+            artifact_id=artifact_id,
+            slide_index=slide_index,
+            prompt=revision_prompt,
+        )
+        if getattr(status, "task_id", ""):
+            await client.artifacts.wait_for_completion(notebook_id, status.task_id)
 
-    Returns the updated slide dict.
-    """
-    client = _get_client(cookies_path)
+    return {
+        "title": f"Slide {slide_index + 1}",
+        "content": f"Revision submitted to NotebookLM: {revision_prompt}",
+    }
 
-    updated = await asyncio.to_thread(
-        client.artifacts.revise_slide,
-        notebook_id=notebook_id,
-        artifact_id=artifact_id,
-        slide_index=slide_index,
-        prompt=revision_prompt,
-    )
 
-    return updated  # type: ignore[return-value]
+async def _latest_artifact(client, notebook_id: str, kind: str):
+    mapping = {
+        "audio": client.artifacts.list_audio,
+        "slide_deck": client.artifacts.list_slide_decks,
+        "quiz": client.artifacts.list_quizzes,
+    }
+    artifacts = await mapping[kind](notebook_id)
+    completed = [artifact for artifact in artifacts if artifact.is_completed]
+    if not completed:
+        raise RuntimeError(f"No completed {kind} artifact found for notebook {notebook_id}.")
+    completed.sort(key=lambda artifact: artifact.created_at.timestamp() if artifact.created_at else 0, reverse=True)
+    return completed[0]

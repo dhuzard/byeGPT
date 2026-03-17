@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -25,6 +26,7 @@ _LOGIN_TIMEOUT_MS = 300_000  # 5 minutes for the user to log in
 
 _NOTEBOOKLM_HOST = "notebooklm.google.com"
 _GOOGLE_ACCOUNTS_HOST = "accounts.google.com"
+_DEFAULT_BROWSER_CANDIDATES = ("chrome", "msedge", "chromium")
 
 
 def _is_notebooklm_home(url: str) -> bool:
@@ -58,6 +60,39 @@ async def _wait_for_login(context: BrowserContext) -> None:
     await page.close()
 
 
+async def _launch_browser(pw, *, headless: bool):
+    """
+    Launch a Chromium-based browser.
+
+    Prefer a real installed browser channel because Google often rejects the
+    bundled Playwright Chromium as "not secure".
+    """
+    preferred = os.environ.get("BYEGPT_BROWSER_CHANNEL", "").strip()
+    candidates = [preferred] if preferred else list(_DEFAULT_BROWSER_CANDIDATES)
+
+    last_error: Exception | None = None
+    for channel in candidates:
+        if not channel:
+            continue
+        try:
+            logger.info("Launching browser via Playwright channel '%s'", channel)
+            return await pw.chromium.launch(headless=headless, channel=channel)
+        except Exception as exc:  # pragma: no cover - depends on local browser install
+            last_error = exc
+            logger.warning("Failed to launch browser channel '%s': %s", channel, exc)
+
+    logger.info("Falling back to bundled Playwright Chromium")
+    try:
+        return await pw.chromium.launch(headless=headless)
+    except Exception as exc:  # pragma: no cover - defensive path
+        if last_error is not None:
+            raise RuntimeError(
+                "Could not launch Chrome/Edge or bundled Chromium. "
+                "Install Google Chrome or Microsoft Edge, or set BYEGPT_BROWSER_CHANNEL."
+            ) from exc
+        raise
+
+
 async def login_and_save(
     storage_path: Path = _DEFAULT_STORAGE_PATH,
     *,
@@ -78,7 +113,7 @@ async def login_and_save(
     storage_path.parent.mkdir(parents=True, exist_ok=True)
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=headless)
+        browser = await _launch_browser(pw, headless=headless)
         context = await browser.new_context()
         await _wait_for_login(context)
         await context.storage_state(path=str(storage_path))
@@ -117,7 +152,7 @@ async def load_context(
         )
 
     pw = await async_playwright().start()
-    browser = await pw.chromium.launch(headless=headless)
+    browser = await _launch_browser(pw, headless=headless)
     context = await browser.new_context(storage_state=str(storage_path))
     return pw, browser, context
 

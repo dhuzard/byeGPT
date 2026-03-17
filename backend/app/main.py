@@ -543,9 +543,9 @@ async def _generate_and_store_artifact(notebook_id: str, artifact_type: str) -> 
         )
         storage.add_artifact_file(
             metadata["artifact_id"],
-            "mp3",
+            "mp4",
             content=result["bytes"],
-            filename="audio.mp3",
+            filename="audio.mp4",
         )
         return metadata
 
@@ -583,7 +583,20 @@ async def _generate_and_store_artifact(notebook_id: str, artifact_type: str) -> 
             content=build_markdown_table(rows),
             filename="tables.md",
         )
-        _maybe_add_pptx_export(storage, metadata["artifact_id"], slides)
+        if result.get("pptx_bytes"):
+            storage.add_artifact_file(
+                metadata["artifact_id"],
+                "pptx",
+                content=result["pptx_bytes"],
+                filename="slides.pptx",
+            )
+        if result.get("pdf_bytes"):
+            storage.add_artifact_file(
+                metadata["artifact_id"],
+                "pdf",
+                content=result["pdf_bytes"],
+                filename="slides.pdf",
+            )
         return metadata
 
     if artifact_type == "quiz":
