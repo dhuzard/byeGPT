@@ -49,7 +49,7 @@ Your conversation history is a goldmine. Whether you just want a quick backup to
 ### Use Case C: The Studio Dashboard (v3 — full visual experience) 🆕
 *You want a point-and-click interface that handles everything — conversion, NotebookLM upload, and AI artifact generation — without touching the terminal.*
 
-1. Start the Studio with `docker compose up` and open `http://localhost:5173`.
+1. Start the Studio with `docker compose up` and open `http://127.0.0.1:5173` (use `http://localhost:5173` only if it resolves correctly on your machine).
 2. Drag-and-drop your `.zip` export onto the **Ingestion Dropzone** — conversion starts immediately.
 3. Click **Generate Digital Passport** to synthesize your AI persona, then copy it to the clipboard with one click.
 4. Use the **Studio Controls** sidebar to batch-upload your Markdown files to NotebookLM, then generate a mind map, audio overview, or slide deck directly from the dashboard.
@@ -90,8 +90,8 @@ docker compose up --build
 
 | Service | URL |
 |---|---|
-| Studio Dashboard (React) | http://localhost:5173 |
-| Backend API + Swagger docs | http://localhost:8000/docs |
+| Studio Dashboard (React) | http://127.0.0.1:5173 |
+| Backend API + Swagger docs | http://127.0.0.1:8000/docs |
 
 ---
 

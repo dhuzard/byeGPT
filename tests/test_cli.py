@@ -108,7 +108,7 @@ class TestPersonaCommand:
 
         content = output_file.read_text(encoding="utf-8")
         assert "Digital Passport" in content
-        assert "Profile Summary" in content
+        assert "## Snapshot" in content
 
 
 class TestVersionFlag:

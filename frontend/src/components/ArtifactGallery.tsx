@@ -5,6 +5,7 @@
 import React, { useState } from "react";
 import { Play, Pause, ChevronDown, ChevronUp, Send } from "lucide-react";
 import { MindMap, MindMapData } from "./MindMap";
+import { QuizData } from "../hooks/useNotebook";
 
 interface Slide {
   title: string;
@@ -15,6 +16,7 @@ interface ArtifactGalleryProps {
   mindMap: MindMapData | null;
   audioUrl: string | null;
   slides: Slide[];
+  quiz: QuizData | null;
   onReviseSlide?: (slideIndex: number, prompt: string) => void;
 }
 
@@ -22,9 +24,10 @@ export function ArtifactGallery({
   mindMap,
   audioUrl,
   slides,
+  quiz,
   onReviseSlide,
 }: ArtifactGalleryProps) {
-  if (!mindMap && !audioUrl && slides.length === 0) return null;
+  if (!mindMap && !audioUrl && slides.length === 0 && !quiz) return null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -36,6 +39,7 @@ export function ArtifactGallery({
           onRevise={onReviseSlide}
         />
       )}
+      {quiz && <QuizPanel quiz={quiz} />}
     </div>
   );
 }
@@ -152,6 +156,28 @@ function SlideEditor({ slides, onRevise }: SlideEditorProps) {
                   </div>
                 )}
               </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QuizPanel({ quiz }: { quiz: QuizData }) {
+  return (
+    <div className="rounded-xl bg-gray-900 border border-gray-800 overflow-hidden">
+      <div className="px-5 py-4 border-b border-gray-800">
+        <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
+          {quiz.title || "Quiz"}
+        </h3>
+      </div>
+      <div className="divide-y divide-gray-800">
+        {quiz.questions.map((question, index) => (
+          <div key={`${question.question}-${index}`} className="px-5 py-4">
+            <p className="text-sm font-medium text-gray-100">{index + 1}. {question.question}</p>
+            {question.answer && (
+              <p className="mt-2 text-sm text-gray-400">Answer: {question.answer}</p>
             )}
           </div>
         ))}

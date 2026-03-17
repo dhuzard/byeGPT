@@ -1,41 +1,52 @@
-import { useEffect, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import {
   BrainCircuit,
   CloudUpload,
+  Download,
   Headphones,
   Loader2,
   LogIn,
   Presentation,
   RefreshCw,
   ShieldCheck,
-  ShieldX,
+  Sparkles,
 } from "lucide-react";
-import { useNotebook } from "../hooks/useNotebook";
+import { JobRecord } from "../hooks/useNotebook";
 
 const API_BASE = "/api";
 
 interface StudioControlsProps {
   outputDir: string | null;
+  passportId: string | null;
   notebookIds: string[];
-  onNotebookIds: (ids: string[]) => void;
+  selectedNotebookId: string | null;
+  currentJob: JobRecord | null;
+  isLoading: boolean;
+  error: string | null;
+  onUpload: (
+    outputDir: string,
+    title?: string,
+    passportId?: string | null
+  ) => Promise<string[]>;
+  onGenerateArtifacts: (
+    types: Array<"mind_map" | "audio" | "slides" | "quiz">
+  ) => Promise<JobRecord | null>;
+  onSelectedNotebookId: (notebookId: string) => void;
 }
 
 export function StudioControls({
   outputDir,
+  passportId,
   notebookIds,
-  onNotebookIds,
+  selectedNotebookId,
+  currentJob,
+  isLoading,
+  error,
+  onUpload,
+  onGenerateArtifacts,
+  onSelectedNotebookId,
 }: StudioControlsProps) {
-  const {
-    isLoading,
-    error,
-    uploadToNotebookLM,
-    fetchMindMap,
-    fetchAudio,
-    fetchSlides,
-  } = useNotebook();
-
   const [notebookTitle, setNotebookTitle] = useState("byeGPT Archive");
-  const [activeNotebook, setActiveNotebook] = useState("");
   const [authChecked, setAuthChecked] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
@@ -44,21 +55,20 @@ export function StudioControls({
   const refreshAuthStatus = async () => {
     setAuthLoading(true);
     setAuthMessage("");
-
     try {
       const res = await fetch(`${API_BASE}/auth/status`);
       if (!res.ok) {
         throw new Error(await res.text());
       }
-
       const data = (await res.json()) as { authenticated: boolean };
       setIsAuthenticated(Boolean(data.authenticated));
-      if (data.authenticated) {
-        setAuthMessage("NotebookLM session is connected.");
-      }
+      setAuthMessage(
+        data.authenticated
+          ? "Studio is ready. Demo mode works without Google login."
+          : "NotebookLM login is still required."
+      );
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setAuthMessage(message);
+      setAuthMessage(err instanceof Error ? err.message : String(err));
       setIsAuthenticated(false);
     } finally {
       setAuthChecked(true);
@@ -73,28 +83,19 @@ export function StudioControls({
   const startLogin = async () => {
     setAuthLoading(true);
     setAuthMessage("");
-
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
-        method: "POST",
-      });
+      const res = await fetch(`${API_BASE}/auth/login`, { method: "POST" });
       const text = await res.text();
-
       if (!res.ok) {
         throw new Error(text || `HTTP ${res.status}`);
       }
-
-      const data = JSON.parse(text) as { message?: string; status?: string };
-      setAuthMessage(
-        data.message ||
-          "Login flow started. If no browser appears in Docker, provide a valid .byegpt/storage.json session file."
-      );
+      const data = JSON.parse(text) as { message?: string };
+      setAuthMessage(data.message ?? "Login flow started.");
       window.setTimeout(() => {
         void refreshAuthStatus();
-      }, 2500);
+      }, 1000);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setAuthMessage(message);
+      setAuthMessage(err instanceof Error ? err.message : String(err));
       setIsAuthenticated(false);
     } finally {
       setAuthChecked(true);
@@ -106,15 +107,20 @@ export function StudioControls({
     if (!outputDir || !isAuthenticated) {
       return;
     }
-
-    const ids = await uploadToNotebookLM(outputDir, notebookTitle);
-    if (ids.length) {
-      onNotebookIds(ids);
-      setActiveNotebook(ids[0]);
+    const ids = await onUpload(outputDir, notebookTitle, passportId);
+    if (ids[0]) {
+      onSelectedNotebookId(ids[0]);
     }
   };
 
-  const notebookId = activeNotebook || notebookIds[0] || "";
+  const notebookId = selectedNotebookId || notebookIds[0] || "";
+
+  const handleBundleExport = () => {
+    if (!notebookId) {
+      return;
+    }
+    window.open(`${API_BASE}/notebooks/${notebookId}/export`, "_blank", "noopener,noreferrer");
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -122,10 +128,10 @@ export function StudioControls({
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold uppercase tracking-[0.22em] text-gray-400">
-              NotebookLM Access
+              Studio Access
             </h3>
             <p className="mt-1 text-xs text-gray-500">
-              Connect a saved Google session before uploading converted files.
+              Demo mode is the easiest path for non-technical testers.
             </p>
           </div>
           <AuthBadge
@@ -140,7 +146,7 @@ export function StudioControls({
             onClick={startLogin}
             disabled={authLoading}
             icon={<LogIn className="h-4 w-4" />}
-            label={isAuthenticated ? "Reconnect Session" : "Start Login"}
+            label="Check Login"
             isLoading={authLoading}
           />
           <ActionButton
@@ -153,20 +159,12 @@ export function StudioControls({
           />
         </div>
 
-        <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-100">
-          In Docker, browser login may not open on your host. If refresh never turns green,
-          place a valid Playwright session file at <code>.byegpt/storage.json</code> and
-          refresh status.
-        </div>
-
-        {authMessage && (
-          <p className="mt-3 text-sm text-gray-300">{authMessage}</p>
-        )}
+        {authMessage && <p className="mt-3 text-sm text-gray-300">{authMessage}</p>}
       </section>
 
       <section className="rounded-2xl border border-gray-800 bg-gray-900/90 p-5 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
         <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.22em] text-gray-400">
-          1 · Upload To NotebookLM
+          1 · Create Notebook
         </h3>
         <label className="mb-1 block text-xs text-gray-400">Notebook title</label>
         <input
@@ -180,14 +178,9 @@ export function StudioControls({
           onClick={handleUpload}
           disabled={!outputDir || isLoading || !isAuthenticated}
           icon={<CloudUpload className="h-4 w-4" />}
-          label="Upload to NotebookLM"
+          label="Create Notebook"
           isLoading={isLoading}
         />
-        {!isAuthenticated && (
-          <p className="mt-3 text-xs text-amber-300">
-            Connect NotebookLM first. The backend needs a saved Google session.
-          </p>
-        )}
         {notebookIds.length > 0 && (
           <div className="mt-3 rounded-xl bg-gray-800 p-3 text-xs text-gray-300">
             {notebookIds.length} notebook{notebookIds.length > 1 ? "s" : ""} created
@@ -198,19 +191,19 @@ export function StudioControls({
       {notebookIds.length > 0 && (
         <section className="rounded-2xl border border-gray-800 bg-gray-900/90 p-5 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
           <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.22em] text-gray-400">
-            2 · Generate Artifacts
+            2 · Generate Studio Suite
           </h3>
           {notebookIds.length > 1 && (
             <>
               <label className="mb-1 block text-xs text-gray-400">Select notebook</label>
               <select
-                value={activeNotebook}
-                onChange={(e) => setActiveNotebook(e.target.value)}
+                value={notebookId}
+                onChange={(event) => onSelectedNotebookId(event.target.value)}
                 className="mb-3 w-full rounded-xl border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-500"
               >
                 {notebookIds.map((id) => (
                   <option key={id} value={id}>
-                    {id.substring(0, 16)}...
+                    {id}
                   </option>
                 ))}
               </select>
@@ -219,27 +212,59 @@ export function StudioControls({
 
           <div className="grid grid-cols-1 gap-2">
             <ActionButton
-              onClick={() => fetchMindMap(notebookId)}
+              onClick={() => void onGenerateArtifacts(["mind_map", "audio", "slides", "quiz"])}
+              disabled={!notebookId || isLoading}
+              icon={<Sparkles className="h-4 w-4" />}
+              label="Generate Studio Suite"
+              isLoading={isLoading}
+            />
+            <ActionButton
+              onClick={() => void onGenerateArtifacts(["mind_map"])}
               disabled={!notebookId || isLoading}
               icon={<BrainCircuit className="h-4 w-4" />}
               label="Generate Mind Map"
-              isLoading={isLoading}
+              isLoading={false}
+              tone="secondary"
             />
             <ActionButton
-              onClick={() => fetchAudio(notebookId)}
+              onClick={() => void onGenerateArtifacts(["audio"])}
               disabled={!notebookId || isLoading}
               icon={<Headphones className="h-4 w-4" />}
-              label="Generate Audio Overview"
-              isLoading={isLoading}
+              label="Generate Audio"
+              isLoading={false}
+              tone="secondary"
             />
             <ActionButton
-              onClick={() => fetchSlides(notebookId)}
+              onClick={() => void onGenerateArtifacts(["slides", "quiz"])}
               disabled={!notebookId || isLoading}
               icon={<Presentation className="h-4 w-4" />}
-              label="Generate Slides"
-              isLoading={isLoading}
+              label="Generate Slides + Quiz"
+              isLoading={false}
+              tone="secondary"
             />
           </div>
+
+          {currentJob && (
+            <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.04] p-3 text-sm text-gray-300">
+              Job {currentJob.job_id}: {currentJob.status}
+            </div>
+          )}
+        </section>
+      )}
+
+      {notebookIds.length > 0 && (
+        <section className="rounded-2xl border border-gray-800 bg-gray-900/90 p-5 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
+          <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.22em] text-gray-400">
+            3 · Export Bundle
+          </h3>
+          <ActionButton
+            onClick={handleBundleExport}
+            disabled={!notebookId}
+            icon={<Download className="h-4 w-4" />}
+            label="Download Notebook Bundle"
+            isLoading={false}
+            tone="secondary"
+          />
         </section>
       )}
 
@@ -274,26 +299,16 @@ function AuthBadge({
     return (
       <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs text-emerald-300">
         <ShieldCheck className="h-3.5 w-3.5" />
-        Connected
+        Ready
       </div>
     );
   }
 
   return (
-    <div className="inline-flex items-center gap-2 rounded-full border border-red-500/30 bg-red-500/10 px-3 py-1 text-xs text-red-300">
-      <ShieldX className="h-3.5 w-3.5" />
-      Not connected
+    <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs text-amber-300">
+      Login Needed
     </div>
   );
-}
-
-interface ActionButtonProps {
-  onClick: () => void;
-  disabled: boolean;
-  icon: React.ReactNode;
-  label: string;
-  isLoading?: boolean;
-  tone?: "primary" | "secondary";
 }
 
 function ActionButton({
@@ -303,17 +318,24 @@ function ActionButton({
   label,
   isLoading,
   tone = "primary",
-}: ActionButtonProps) {
-  const toneClass =
-    tone === "secondary"
-      ? "bg-gray-800 text-gray-200 hover:bg-gray-700"
-      : "bg-brand-600 text-white hover:bg-brand-700";
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  icon: ReactNode;
+  label: string;
+  isLoading: boolean;
+  tone?: "primary" | "secondary";
+}) {
+  const toneClasses =
+    tone === "primary"
+      ? "bg-brand-500 text-slate-950 hover:bg-brand-400"
+      : "border border-white/10 bg-white/[0.04] text-gray-100 hover:bg-white/[0.08]";
 
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:bg-gray-700 disabled:text-gray-400 ${toneClass}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:bg-gray-800 disabled:text-gray-500 ${toneClasses}`}
     >
       {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : icon}
       {label}

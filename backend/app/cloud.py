@@ -1,18 +1,14 @@
 """
 backend/app/cloud.py — notebooklm-py wrapper (the Studio Engine).
 
-Wraps the ``notebooklm-py`` library to provide:
-  - Batch uploader: merges multiple Markdown files into 50-source chunks
-  - Artifact manager: generates and downloads mind maps
-  - Audio overview generation
-  - Slide generation helpers
+Wraps the ``notebooklm-py`` library and normalises artifact payloads into a
+stable shape for the API layer.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import math
 from pathlib import Path
 from typing import Any
 
@@ -110,14 +106,17 @@ async def generate_mind_map(
         artifact_id=artifact.id,
     )
 
-    return mind_map_data  # type: ignore[return-value]
+    return {
+        "artifact_id": artifact.id,
+        "data": mind_map_data,  # type: ignore[dict-item]
+    }
 
 
 async def generate_audio_overview(
     notebook_id: str,
     cookies_path: Path,
-    output_path: Path,
-) -> Path:
+    output_path: Path | None = None,
+) -> dict[str, Any]:
     """
     Generate an Audio Overview for the notebook and save it as an MP3.
 
@@ -136,17 +135,22 @@ async def generate_audio_overview(
         artifact_id=artifact.id,
     )
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_bytes(audio_bytes)
-    logger.info("Audio overview saved to %s", output_path)
-    return output_path
+    if output_path is not None:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(audio_bytes)
+        logger.info("Audio overview saved to %s", output_path)
+
+    return {
+        "artifact_id": artifact.id,
+        "bytes": audio_bytes,
+    }
 
 
 async def generate_slides(
     notebook_id: str,
     cookies_path: Path,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """
     Generate presentation slides for the notebook.
 
@@ -165,7 +169,55 @@ async def generate_slides(
         artifact_id=artifact.id,
     )
 
-    return slides  # type: ignore[return-value]
+    return {
+        "artifact_id": artifact.id,
+        "slides": slides,  # type: ignore[dict-item]
+    }
+
+
+async def generate_quiz(
+    notebook_id: str,
+    cookies_path: Path,
+) -> dict[str, Any]:
+    """
+    Generate quiz data for the notebook when supported by notebooklm-py.
+
+    Falls back to a slide-derived quiz when the upstream client does not expose
+    quiz APIs.
+    """
+    client = _get_client(cookies_path)
+
+    if hasattr(client.artifacts, "generate_quiz") and hasattr(client.artifacts, "download_quiz"):
+        logger.info("Generating quiz for notebook %s…", notebook_id)
+        artifact = await asyncio.to_thread(
+            client.artifacts.generate_quiz,
+            notebook_id=notebook_id,
+        )
+        quiz = await asyncio.to_thread(
+            client.artifacts.download_quiz,
+            artifact_id=artifact.id,
+        )
+        return {
+            "artifact_id": artifact.id,
+            "quiz": quiz,  # type: ignore[dict-item]
+        }
+
+    slides_result = await generate_slides(notebook_id=notebook_id, cookies_path=cookies_path)
+    slides = slides_result["slides"]
+    quiz = {
+        "title": "Notebook Review Quiz",
+        "questions": [
+            {
+                "question": f"What is the main point of '{slide.get('title', f'Slide {index + 1}')}'?",
+                "answer": slide.get("content", ""),
+            }
+            for index, slide in enumerate(slides[:5])
+        ],
+    }
+    return {
+        "artifact_id": slides_result["artifact_id"],
+        "quiz": quiz,
+    }
 
 
 async def revise_slide(

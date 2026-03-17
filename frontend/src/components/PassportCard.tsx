@@ -5,6 +5,7 @@ const API_BASE = "/api";
 
 interface PassportCardProps {
   exportFile: File | null;
+  onGenerated?: (passportId: string | null) => void;
 }
 
 interface PassportSection {
@@ -18,7 +19,7 @@ interface PassportMetric {
   value: string;
 }
 
-export function PassportCard({ exportFile }: PassportCardProps) {
+export function PassportCard({ exportFile, onGenerated }: PassportCardProps) {
   const [markdown, setMarkdown] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -41,8 +42,9 @@ export function PassportCard({ exportFile }: PassportCardProps) {
       if (!res.ok) {
         throw new Error(readErrorText(text));
       }
-      const data = JSON.parse(text) as { passport_markdown: string };
+      const data = JSON.parse(text) as { passport_markdown: string; passport_id?: string };
       setMarkdown(data.passport_markdown);
+      onGenerated?.(data.passport_id ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

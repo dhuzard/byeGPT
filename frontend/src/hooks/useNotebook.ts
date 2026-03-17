@@ -1,29 +1,6 @@
-/**
- * useNotebook — API polling hook for NotebookLM artifacts.
- *
- * Polls the backend for the status of an asynchronous artifact generation
- * task (mind map, audio overview, slides) until it is ready or fails.
- */
-
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 const API_BASE = "/api";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export interface ConvertResult {
-  output_dir: string;
-  files_created: number;
-  attachment_count: number;
-  conversation_count: number;
-  file_paths: string[];
-}
-
-export interface PersonaResult {
-  passport_markdown: string;
-}
 
 export interface MindMapData {
   nodes: { id: string; label: string; group?: string }[];
@@ -35,18 +12,43 @@ export interface Slide {
   content: string;
 }
 
+export interface QuizQuestion {
+  question: string;
+  answer?: string;
+}
+
+export interface QuizData {
+  title?: string;
+  questions: QuizQuestion[];
+}
+
+export interface ArtifactRecord {
+  artifact_id: string;
+  notebook_id: string;
+  type: "mind_map" | "audio" | "slides" | "quiz";
+  preview: any;
+  download_urls: Record<string, string>;
+  upstream_artifact_id?: string | null;
+}
+
+export interface JobRecord {
+  job_id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  artifact_ids: string[];
+  error?: string | null;
+  result?: {
+    artifacts?: ArtifactRecord[];
+  } | null;
+}
+
 export interface NotebookState {
   notebookIds: string[];
-  mindMap: MindMapData | null;
-  audioUrl: string | null;
-  slides: Slide[];
+  selectedNotebookId: string | null;
+  artifacts: ArtifactRecord[];
+  currentJob: JobRecord | null;
   isLoading: boolean;
   error: string | null;
 }
-
-// ---------------------------------------------------------------------------
-// Low-level fetch helpers
-// ---------------------------------------------------------------------------
 
 async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);
@@ -92,45 +94,50 @@ async function readApiError(res: Response): Promise<string> {
       return parsed.detail;
     }
   } catch {
-    // Fall back to the plain text body below.
+    // Fall back to plain text.
   }
 
   return text;
 }
 
-// ---------------------------------------------------------------------------
-// Hook
-// ---------------------------------------------------------------------------
+function withApiBase(path?: string | null): string | null {
+  if (!path) return null;
+  return path.startsWith("http") ? path : `${API_BASE}${path}`;
+}
 
 export function useNotebook() {
   const [state, setState] = useState<NotebookState>({
     notebookIds: [],
-    mindMap: null,
-    audioUrl: null,
-    slides: [],
+    selectedNotebookId: null,
+    artifacts: [],
+    currentJob: null,
     isLoading: false,
     error: null,
   });
 
-  const setLoading = (isLoading: boolean) =>
-    setState((s) => ({ ...s, isLoading, error: null }));
-
   const setError = (error: string) =>
-    setState((s) => ({ ...s, isLoading: false, error }));
+    setState((current) => ({ ...current, isLoading: false, error }));
 
-  // ── Upload notebooks ──────────────────────────────────────────────────────
+  const setSelectedNotebookId = useCallback((notebookId: string) => {
+    setState((current) => ({ ...current, selectedNotebookId: notebookId }));
+  }, []);
 
   const uploadToNotebookLM = useCallback(
-    async (outputDir: string, title = "byeGPT Archive") => {
-      setLoading(true);
+    async (outputDir: string, title = "byeGPT Archive", passportId?: string | null) => {
+      setState((current) => ({ ...current, isLoading: true, error: null }));
       try {
         const data = await apiPost<{ notebook_ids: string[] }>(
           "/notebooks/upload",
-          { notebook_title: title, output_dir: outputDir }
+          {
+            notebook_title: title,
+            output_dir: outputDir,
+            passport_id: passportId ?? null,
+          }
         );
-        setState((s) => ({
-          ...s,
+        setState((current) => ({
+          ...current,
           notebookIds: data.notebook_ids,
+          selectedNotebookId: data.notebook_ids[0] ?? null,
           isLoading: false,
         }));
         return data.notebook_ids;
@@ -142,77 +149,133 @@ export function useNotebook() {
     []
   );
 
-  // ── Mind map ──────────────────────────────────────────────────────────────
-
-  const fetchMindMap = useCallback(async (notebookId: string) => {
-    setLoading(true);
-    try {
-      const data = await apiGet<{ mind_map: MindMapData }>(
-        `/notebooks/${notebookId}/mindmap`
-      );
-      setState((s) => ({ ...s, mindMap: data.mind_map, isLoading: false }));
-    } catch (err) {
-      setError(String(err));
-    }
+  const refreshArtifact = useCallback(async (artifactId: string) => {
+    return apiGet<ArtifactRecord>(`/artifacts/${artifactId}`);
   }, []);
 
-  // ── Audio overview ────────────────────────────────────────────────────────
+  const startArtifactJob = useCallback(
+    async (types: Array<"mind_map" | "audio" | "slides" | "quiz">) => {
+      if (!state.selectedNotebookId) {
+        return null;
+      }
 
-  const fetchAudio = useCallback(async (notebookId: string) => {
-    setLoading(true);
-    try {
-      const url = `${API_BASE}/notebooks/${notebookId}/audio`;
-      setState((s) => ({ ...s, audioUrl: url, isLoading: false }));
-    } catch (err) {
-      setError(String(err));
-    }
-  }, []);
+      setState((current) => ({ ...current, isLoading: true, error: null }));
+      try {
+        const job = await apiPost<JobRecord>(
+          `/notebooks/${state.selectedNotebookId}/artifacts`,
+          { types }
+        );
+        setState((current) => ({ ...current, currentJob: job }));
 
-  // ── Slides ────────────────────────────────────────────────────────────────
+        let latest = job;
+        while (latest.status === "queued" || latest.status === "running") {
+          await new Promise((resolve) => window.setTimeout(resolve, 800));
+          latest = await apiGet<JobRecord>(`/jobs/${job.job_id}`);
+          setState((current) => ({ ...current, currentJob: latest }));
+        }
 
-  const fetchSlides = useCallback(async (notebookId: string) => {
-    setLoading(true);
-    try {
-      const data = await apiGet<{ slides: Slide[] }>(
-        `/notebooks/${notebookId}/slides`
-      );
-      setState((s) => ({ ...s, slides: data.slides, isLoading: false }));
-    } catch (err) {
-      setError(String(err));
-    }
-  }, []);
+        if (latest.status === "failed") {
+          throw new Error(latest.error || "Artifact job failed.");
+        }
+
+        const artifacts =
+          latest.result?.artifacts ||
+          (await Promise.all(latest.artifact_ids.map((artifactId) => refreshArtifact(artifactId))));
+
+        setState((current) => ({
+          ...current,
+          artifacts: [
+            ...current.artifacts.filter(
+              (existing) => !artifacts.some((incoming) => incoming.type === existing.type)
+            ),
+            ...artifacts,
+          ],
+          currentJob: latest,
+          isLoading: false,
+        }));
+        return latest;
+      } catch (err) {
+        setError(String(err));
+        return null;
+      }
+    },
+    [refreshArtifact, state.selectedNotebookId]
+  );
 
   const reviseSlide = useCallback(
-    async (
-      notebookId: string,
-      artifactId: string,
-      slideIndex: number,
-      prompt: string
-    ) => {
+    async (slideIndex: number, prompt: string) => {
+      const slidesArtifact = state.artifacts.find((artifact) => artifact.type === "slides");
+      if (!slidesArtifact || !state.selectedNotebookId) {
+        return;
+      }
+
       try {
         const data = await apiPatch<{ slide: Slide }>(
-          `/notebooks/${notebookId}/slides/${slideIndex}`,
-          { artifact_id: artifactId, revision_prompt: prompt }
+          `/notebooks/${state.selectedNotebookId}/slides/${slideIndex}`,
+          {
+            artifact_id: slidesArtifact.artifact_id,
+            revision_prompt: prompt,
+          }
         );
-        setState((s) => {
-          const slides = [...s.slides];
-          slides[slideIndex] = data.slide;
-          return { ...s, slides };
-        });
+
+        setState((current) => ({
+          ...current,
+          artifacts: current.artifacts.map((artifact) => {
+            if (artifact.artifact_id !== slidesArtifact.artifact_id) {
+              return artifact;
+            }
+
+            const currentSlides = Array.isArray(artifact.preview?.slides)
+              ? [...artifact.preview.slides]
+              : [];
+            currentSlides[slideIndex] = data.slide;
+            return {
+              ...artifact,
+              preview: {
+                ...(artifact.preview || {}),
+                slides: currentSlides,
+              },
+            };
+          }),
+        }));
       } catch (err) {
         setError(String(err));
       }
     },
-    []
+    [state.artifacts, state.selectedNotebookId]
   );
 
-  // Cleanup on unmount — placeholder for future AbortController integration
+  const mindMap = useMemo(
+    () => (state.artifacts.find((artifact) => artifact.type === "mind_map")?.preview ?? null) as MindMapData | null,
+    [state.artifacts]
+  );
+  const audioUrl = useMemo(
+    () => {
+      const downloadUrls = state.artifacts.find((artifact) => artifact.type === "audio")?.download_urls;
+      return withApiBase(downloadUrls?.mp3 ?? downloadUrls?.wav ?? null);
+    },
+    [state.artifacts]
+  );
+  const slides = useMemo(
+    () =>
+      ((state.artifacts.find((artifact) => artifact.type === "slides")?.preview?.slides ??
+        []) as Slide[]),
+    [state.artifacts]
+  );
+  const quiz = useMemo(
+    () => (state.artifacts.find((artifact) => artifact.type === "quiz")?.preview ?? null) as QuizData | null,
+    [state.artifacts]
+  );
+
   return {
     ...state,
+    mindMap,
+    audioUrl,
+    slides,
+    quiz,
+    setSelectedNotebookId,
     uploadToNotebookLM,
-    fetchMindMap,
-    fetchAudio,
-    fetchSlides,
+    startArtifactJob,
     reviseSlide,
   };
 }

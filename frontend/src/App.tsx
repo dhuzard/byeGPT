@@ -1,27 +1,21 @@
-/**
- * App.tsx — byeGPT Studio root component.
- *
- * Layout
- * ──────
- *  ┌─ Header ────────────────────────────────┐
- *  │ byeGPT Studio                           │
- *  ├─ Main ──────────────────────────────────┤
- *  │  ┌─ Left (2/3) ────┐  ┌─ Right (1/3) ─┐│
- *  │  │ IngestionDropzone│  │ StudioControls ││
- *  │  │ PassportCard     │  │                ││
- *  │  │ ChatGallery      │  │                ││
- *  │  │ ArtifactGallery  │  │                ││
- *  │  └─────────────────┘  └────────────────┘│
- *  └─────────────────────────────────────────┘
- */
-
 import { useState } from "react";
-import { IngestionDropzone } from "./components/IngestionDropzone";
-import { StudioControls } from "./components/StudioControls";
-import { ChatGallery } from "./components/ChatGallery";
-import { PassportCard } from "./components/PassportCard";
 import { ArtifactGallery } from "./components/ArtifactGallery";
+import { ChatGallery } from "./components/ChatGallery";
+import { IngestionDropzone } from "./components/IngestionDropzone";
+import { PassportCard } from "./components/PassportCard";
+import { SearchPanel } from "./components/SearchPanel";
+import { StudioControls } from "./components/StudioControls";
+import { TopicLaboratory } from "./components/TopicLaboratory";
 import { useNotebook } from "./hooks/useNotebook";
+
+interface TopicLaboratoryData {
+  total_conversations: number;
+  topics: Array<{
+    topic: string;
+    count: number;
+    titles: string[];
+  }>;
+}
 
 interface ConvertResult {
   output_dir: string;
@@ -29,64 +23,62 @@ interface ConvertResult {
   attachment_count: number;
   conversation_count: number;
   file_paths: string[];
+  topic_laboratory?: TopicLaboratoryData;
 }
 
 export default function App() {
   const [convertResult, setConvertResult] = useState<ConvertResult | null>(null);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
-  const [notebookIds, setNotebookIds] = useState<string[]>([]);
+  const [passportId, setPassportId] = useState<string | null>(null);
 
-  const { mindMap, audioUrl, slides, reviseSlide } = useNotebook();
-
-  const handleConverted = (result: ConvertResult) => {
-    setConvertResult(result);
-  };
-
-  const handleSelectedFile = (file: File | null) => {
-    setUploadedFile(file);
-  };
-
-  const activeNotebookId = notebookIds[0] ?? "";
+  const {
+    notebookIds,
+    selectedNotebookId,
+    currentJob,
+    mindMap,
+    audioUrl,
+    slides,
+    quiz,
+    isLoading,
+    error,
+    startArtifactJob,
+    reviseSlide,
+    setSelectedNotebookId,
+    uploadToNotebookLM,
+  } = useNotebook();
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
-      {/* ── Header ── */}
       <header className="border-b border-gray-800 bg-gray-900 px-6 py-4">
-        <div className="mx-auto max-w-7xl flex items-center gap-3">
+        <div className="mx-auto flex max-w-7xl items-center gap-3">
           <span className="text-2xl">🚀</span>
           <div>
             <h1 className="text-xl font-bold tracking-tight text-white">
-              byeGPT{" "}
-              <span className="text-brand-400">Studio</span>
+              byeGPT <span className="text-brand-400">Studio</span>
             </h1>
-            <p className="text-xs text-gray-500">v3 · Full-stack PowerApp</p>
+            <p className="text-xs text-gray-500">v4 · Knowledge OS</p>
           </div>
         </div>
       </header>
 
-      {/* ── Main ── */}
       <main className="mx-auto max-w-7xl px-6 py-8">
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
-          {/* Left column */}
-          <div className="lg:col-span-2 flex flex-col gap-8">
-            {/* Step 1: Ingest */}
+          <div className="flex flex-col gap-8 lg:col-span-2">
             <section>
               <SectionHeader step={1} title="Import your ChatGPT export" />
               <IngestionDropzone
-                onConverted={handleConverted}
-                onFileSelected={handleSelectedFile}
+                onConverted={setConvertResult}
+                onFileSelected={setUploadedFile}
               />
             </section>
 
-            {/* Step 2: Passport */}
             {uploadedFile && (
               <section>
                 <SectionHeader step={2} title="Digital Passport" />
-                <PassportCard exportFile={uploadedFile} />
+                <PassportCard exportFile={uploadedFile} onGenerated={setPassportId} />
               </section>
             )}
 
-            {/* Step 3: Files */}
             {convertResult && convertResult.file_paths.length > 0 && (
               <section>
                 <SectionHeader step={3} title="Converted Files" />
@@ -94,30 +86,51 @@ export default function App() {
               </section>
             )}
 
-            {/* Step 4: Artifacts */}
-            {(mindMap || audioUrl || slides.length > 0) && (
+            {convertResult?.topic_laboratory && (
               <section>
-                <SectionHeader step={4} title="Artifacts" />
+                <SectionHeader step={4} title="Topic Laboratory" />
+                <TopicLaboratory
+                  data={convertResult.topic_laboratory}
+                  notebookCount={notebookIds.length}
+                />
+              </section>
+            )}
+
+            {convertResult?.output_dir && (
+              <section>
+                <SectionHeader step={5} title="Semantic Search" />
+                <SearchPanel outputDir={convertResult.output_dir} />
+              </section>
+            )}
+
+            {(mindMap || audioUrl || slides.length > 0 || quiz) && (
+              <section>
+                <SectionHeader step={6} title="Artifacts" />
                 <ArtifactGallery
                   mindMap={mindMap}
                   audioUrl={audioUrl}
                   slides={slides}
-                  onReviseSlide={(idx, prompt) =>
-                    reviseSlide(activeNotebookId, "", idx, prompt)
-                  }
+                  quiz={quiz}
+                  onReviseSlide={reviseSlide}
                 />
               </section>
             )}
           </div>
 
-          {/* Right column — Studio Controls */}
           <div className="lg:col-span-1">
             <div className="sticky top-8">
               <SectionHeader step={null} title="Studio Controls" />
               <StudioControls
                 outputDir={convertResult?.output_dir ?? null}
+                passportId={passportId}
                 notebookIds={notebookIds}
-                onNotebookIds={setNotebookIds}
+                selectedNotebookId={selectedNotebookId}
+                currentJob={currentJob}
+                isLoading={isLoading}
+                error={error}
+                onSelectedNotebookId={setSelectedNotebookId}
+                onUpload={uploadToNotebookLM}
+                onGenerateArtifacts={startArtifactJob}
               />
             </div>
           </div>
@@ -127,10 +140,6 @@ export default function App() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// SectionHeader helper
-// ---------------------------------------------------------------------------
-
 function SectionHeader({
   step,
   title,
@@ -139,9 +148,9 @@ function SectionHeader({
   title: string;
 }) {
   return (
-    <div className="flex items-center gap-3 mb-4">
+    <div className="mb-4 flex items-center gap-3">
       {step !== null && (
-        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-600 text-xs font-bold text-white flex-shrink-0">
+        <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-brand-600 text-xs font-bold text-white">
           {step}
         </span>
       )}
