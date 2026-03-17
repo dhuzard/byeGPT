@@ -1,6 +1,7 @@
 import { ReactNode, useMemo, useState } from "react";
 import { ArtifactGallery } from "./components/ArtifactGallery";
 import { IngestionDropzone } from "./components/IngestionDropzone";
+import { NotebookChatPanel } from "./components/NotebookChatPanel";
 import { PassportCard } from "./components/PassportCard";
 import { SearchPanel } from "./components/SearchPanel";
 import { StudioControls } from "./components/StudioControls";
@@ -28,16 +29,23 @@ export default function App() {
     selectedNotebookId,
     sources,
     currentJob,
+    chat,
     mindMap,
     audioUrl,
+    videoUrl,
+    cinematicVideoUrl,
+    flashcards,
+    infographicUrl,
     slides,
     quiz,
+    dataTable,
     isLoading,
     error,
     uploadToNotebookLM,
     createDerivedNotebook,
     startArtifactJob,
     reviseSlide,
+    askNotebook,
     setSelectedNotebookId,
   } = useNotebook();
 
@@ -163,12 +171,26 @@ export default function App() {
                 </section>
 
                 <section>
+                  <SectionHeader step={null} title="Notebook Interaction" />
+                  <NotebookChatPanel
+                    chat={chat}
+                    onAsk={askNotebook}
+                    disabled={isLoading}
+                  />
+                </section>
+
+                <section>
                   <SectionHeader step={null} title="Artifacts" />
                   <ArtifactGallery
                     mindMap={mindMap}
                     audioUrl={audioUrl}
+                    videoUrl={videoUrl}
+                    cinematicVideoUrl={cinematicVideoUrl}
+                    infographicUrl={infographicUrl}
                     slides={slides}
                     quiz={quiz}
+                    flashcards={flashcards}
+                    dataTable={dataTable}
                     onReviseSlide={reviseSlide}
                   />
                 </section>

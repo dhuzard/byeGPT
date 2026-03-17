@@ -218,7 +218,6 @@ async def generate_audio_overview(
     async with client:
         status = await client.artifacts.generate_audio(notebook_id=notebook_id)
         await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-        artifact = await _latest_artifact(client, notebook_id, "audio")
 
         if output_path is None:
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
@@ -229,13 +228,13 @@ async def generate_audio_overview(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         await client.artifacts.download_audio(
             notebook_id=notebook_id,
-            artifact_id=artifact.id,
+            artifact_id=status.task_id,
             output_path=str(output_path),
         )
         audio_bytes = output_path.read_bytes()
 
         return {
-            "artifact_id": artifact.id,
+            "artifact_id": status.task_id,
             "bytes": audio_bytes,
         }
 
@@ -248,11 +247,10 @@ async def generate_slides(
     async with client:
         status = await client.artifacts.generate_slide_deck(notebook_id=notebook_id)
         await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-        artifact = await _latest_artifact(client, notebook_id, "slide_deck")
 
         slides = [
             {
-                "title": artifact.title or "Slide deck generated",
+                "title": "Slide deck generated",
                 "content": "Slide deck generated in NotebookLM. Use PPTX or PDF export for full content.",
             }
         ]
@@ -262,7 +260,7 @@ async def generate_slides(
         try:
             await client.artifacts.download_slide_deck(
                 notebook_id=notebook_id,
-                artifact_id=artifact.id,
+                artifact_id=status.task_id,
                 output_path=str(pptx_path),
                 output_format="pptx",
             )
@@ -275,7 +273,7 @@ async def generate_slides(
         try:
             await client.artifacts.download_slide_deck(
                 notebook_id=notebook_id,
-                artifact_id=artifact.id,
+                artifact_id=status.task_id,
                 output_path=str(pdf_path),
                 output_format="pdf",
             )
@@ -284,11 +282,11 @@ async def generate_slides(
             pdf_path.unlink(missing_ok=True)
 
         return {
-            "artifact_id": artifact.id,
+            "artifact_id": status.task_id,
             "slides": slides,
             "pptx_bytes": pptx_bytes,
             "pdf_bytes": pdf_bytes,
-            "title": artifact.title,
+            "title": "Slide deck generated",
         }
 
 
@@ -300,14 +298,13 @@ async def generate_quiz(
     async with client:
         status = await client.artifacts.generate_quiz(notebook_id=notebook_id)
         await client.artifacts.wait_for_completion(notebook_id, status.task_id)
-        artifact = await _latest_artifact(client, notebook_id, "quiz")
 
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as json_tmp:
             json_path = Path(json_tmp.name)
         try:
             await client.artifacts.download_quiz(
                 notebook_id=notebook_id,
-                artifact_id=artifact.id,
+                artifact_id=status.task_id,
                 output_path=str(json_path),
                 output_format="json",
             )
@@ -316,8 +313,137 @@ async def generate_quiz(
             json_path.unlink(missing_ok=True)
 
         return {
-            "artifact_id": artifact.id,
+            "artifact_id": status.task_id,
             "quiz": quiz,
+        }
+
+
+async def generate_video_overview(
+    notebook_id: str,
+    cookies_path: Path,
+    *,
+    cinematic: bool = False,
+) -> dict[str, Any]:
+    client = await _get_client(cookies_path)
+    async with client:
+        if cinematic:
+            status = await client.artifacts.generate_cinematic_video(notebook_id=notebook_id)
+        else:
+            status = await client.artifacts.generate_video(notebook_id=notebook_id)
+        await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as video_tmp:
+            video_path = Path(video_tmp.name)
+        try:
+            await client.artifacts.download_video(
+                notebook_id=notebook_id,
+                artifact_id=status.task_id,
+                output_path=str(video_path),
+            )
+            video_bytes = video_path.read_bytes()
+        finally:
+            video_path.unlink(missing_ok=True)
+
+        return {
+            "artifact_id": status.task_id,
+            "bytes": video_bytes,
+        }
+
+
+async def generate_flashcards(
+    notebook_id: str,
+    cookies_path: Path,
+) -> dict[str, Any]:
+    client = await _get_client(cookies_path)
+    async with client:
+        status = await client.artifacts.generate_flashcards(notebook_id=notebook_id)
+        await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as json_tmp:
+            json_path = Path(json_tmp.name)
+        with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as markdown_tmp:
+            markdown_path = Path(markdown_tmp.name)
+        try:
+            await client.artifacts.download_flashcards(
+                notebook_id=notebook_id,
+                artifact_id=status.task_id,
+                output_path=str(json_path),
+                output_format="json",
+            )
+            await client.artifacts.download_flashcards(
+                notebook_id=notebook_id,
+                artifact_id=status.task_id,
+                output_path=str(markdown_path),
+                output_format="markdown",
+            )
+            payload = json.loads(json_path.read_text(encoding="utf-8"))
+            markdown = markdown_path.read_text(encoding="utf-8")
+        finally:
+            json_path.unlink(missing_ok=True)
+            markdown_path.unlink(missing_ok=True)
+
+        return {
+            "artifact_id": status.task_id,
+            "flashcards": payload,
+            "markdown": markdown,
+        }
+
+
+async def generate_infographic(
+    notebook_id: str,
+    cookies_path: Path,
+) -> dict[str, Any]:
+    client = await _get_client(cookies_path)
+    async with client:
+        status = await client.artifacts.generate_infographic(notebook_id=notebook_id)
+        await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as image_tmp:
+            image_path = Path(image_tmp.name)
+        try:
+            await client.artifacts.download_infographic(
+                notebook_id=notebook_id,
+                artifact_id=status.task_id,
+                output_path=str(image_path),
+            )
+            image_bytes = image_path.read_bytes()
+        finally:
+            image_path.unlink(missing_ok=True)
+
+        return {
+            "artifact_id": status.task_id,
+            "bytes": image_bytes,
+        }
+
+
+async def generate_data_table(
+    notebook_id: str,
+    cookies_path: Path,
+    instructions: str = "compare key concepts",
+) -> dict[str, Any]:
+    client = await _get_client(cookies_path)
+    async with client:
+        status = await client.artifacts.generate_data_table(
+            notebook_id=notebook_id,
+            instructions=instructions,
+        )
+        await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as csv_tmp:
+            csv_path = Path(csv_tmp.name)
+        try:
+            await client.artifacts.download_data_table(
+                notebook_id=notebook_id,
+                artifact_id=status.task_id,
+                output_path=str(csv_path),
+            )
+            csv_text = csv_path.read_text(encoding="utf-8")
+        finally:
+            csv_path.unlink(missing_ok=True)
+
+        return {
+            "artifact_id": status.task_id,
+            "csv": csv_text,
         }
 
 
@@ -342,6 +468,67 @@ async def revise_slide(
     return {
         "title": f"Slide {slide_index + 1}",
         "content": f"Revision submitted to NotebookLM: {revision_prompt}",
+    }
+
+
+async def ask_notebook(
+    notebook_id: str,
+    question: str,
+    cookies_path: Path,
+    conversation_id: str | None = None,
+) -> dict[str, Any]:
+    client = await _get_client(cookies_path)
+    async with client:
+        result = await client.chat.ask(
+            notebook_id=notebook_id,
+            question=question,
+            conversation_id=conversation_id,
+        )
+
+    references = []
+    for reference in getattr(result, "references", []) or []:
+        references.append(
+            {
+                "title": getattr(reference, "title", None),
+                "source_id": getattr(reference, "source_id", None),
+                "url": getattr(reference, "url", None),
+            }
+        )
+
+    return {
+        "answer": result.answer,
+        "conversation_id": result.conversation_id,
+        "turn_number": result.turn_number,
+        "is_follow_up": result.is_follow_up,
+        "references": references,
+    }
+
+
+async def get_notebook_chat_history(
+    notebook_id: str,
+    cookies_path: Path,
+    conversation_id: str | None = None,
+    limit: int = 20,
+) -> dict[str, Any]:
+    client = await _get_client(cookies_path)
+    async with client:
+        resolved_conversation_id = conversation_id or await client.chat.get_conversation_id(notebook_id)
+        pairs = await client.chat.get_history(
+            notebook_id=notebook_id,
+            conversation_id=resolved_conversation_id,
+            limit=limit,
+        )
+
+    turns = [
+        {
+            "question": question,
+            "answer": answer,
+        }
+        for question, answer in pairs
+    ]
+    return {
+        "conversation_id": resolved_conversation_id,
+        "turns": turns,
     }
 
 

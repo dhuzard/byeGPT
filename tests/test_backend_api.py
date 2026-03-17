@@ -113,6 +113,48 @@ class TestBackendApi:
             assert notebook_response.status_code == 200
             assert notebook_response.json()["kind"] == "master"
 
+    def test_demo_extended_artifact_job(self, tmp_path, sample_conversations):
+        client = _build_client(tmp_path)
+        source = _write_conversations(tmp_path, sample_conversations)
+
+        with client:
+            with source.open("rb") as handle:
+                convert_response = client.post(
+                    "/convert",
+                    files={"file": ("conversations.json", handle, "application/json")},
+                )
+            output_dir = convert_response.json()["output_dir"]
+
+            upload_response = client.post(
+                "/notebooks/upload",
+                json={"notebook_title": "Extended Demo Notebook", "output_dir": output_dir},
+            )
+            notebook_id = upload_response.json()["notebook_ids"][0]
+
+            job_response = client.post(
+                f"/notebooks/{notebook_id}/artifacts",
+                json={"types": ["video", "cinematic_video", "flashcards", "infographic", "data_table"]},
+            )
+            assert job_response.status_code == 200
+            job_id = job_response.json()["job_id"]
+
+            for _ in range(20):
+                status_response = client.get(f"/jobs/{job_id}")
+                job_payload = status_response.json()
+                if job_payload["status"] == "completed":
+                    break
+                time.sleep(0.1)
+            else:  # pragma: no cover - guardrail
+                raise AssertionError("Extended artifact job did not complete in time.")
+
+            assert len(job_payload["artifact_ids"]) == 5
+            artifact_payloads = [
+                client.get(f"/artifacts/{artifact_id}").json()
+                for artifact_id in job_payload["artifact_ids"]
+            ]
+            artifact_types = {artifact["type"] for artifact in artifact_payloads}
+            assert artifact_types == {"video", "cinematic_video", "flashcards", "infographic", "data_table"}
+
     def test_search_index_and_query(self, tmp_path, sample_conversations):
         client = _build_client(tmp_path)
         source = _write_conversations(tmp_path, sample_conversations)
@@ -181,6 +223,37 @@ class TestBackendApi:
             sources_response = client.get(f"/notebooks/{notebook['notebook_id']}/sources")
             assert sources_response.status_code == 200
             assert sources_response.json()["source_count"] >= 1
+
+    def test_demo_notebook_chat(self, tmp_path, sample_conversations):
+        client = _build_client(tmp_path)
+        source = _write_conversations(tmp_path, sample_conversations)
+
+        with client:
+            with source.open("rb") as handle:
+                convert_response = client.post(
+                    "/convert",
+                    files={"file": ("conversations.json", handle, "application/json")},
+                )
+            output_dir = convert_response.json()["output_dir"]
+
+            upload_response = client.post(
+                "/notebooks/upload",
+                json={"notebook_title": "Demo Notebook", "output_dir": output_dir},
+            )
+            notebook_id = upload_response.json()["notebook_ids"][0]
+
+            chat_response = client.post(
+                f"/notebooks/{notebook_id}/chat",
+                json={"question": "What is this notebook about?"},
+            )
+            assert chat_response.status_code == 200
+            payload = chat_response.json()
+            assert payload["answer"]
+            assert payload["conversation_id"]
+
+            history_response = client.get(f"/notebooks/{notebook_id}/chat")
+            assert history_response.status_code == 200
+            assert "turns" in history_response.json()
 
     def test_upload_returns_gateway_timeout_when_notebooklm_times_out(self, tmp_path, monkeypatch):
         client = _build_client(tmp_path)

@@ -3,13 +3,17 @@ import {
   BrainCircuit,
   CloudUpload,
   Download,
+  Film,
   Headphones,
+  Image,
+  Layers,
   Loader2,
   LogIn,
   Presentation,
   RefreshCw,
   ShieldCheck,
   Sparkles,
+  Table2,
 } from "lucide-react";
 import { JobRecord, NotebookRecord } from "../hooks/useNotebook";
 
@@ -29,7 +33,17 @@ interface StudioControlsProps {
     passportId?: string | null
   ) => Promise<NotebookRecord[]>;
   onGenerateArtifacts: (
-    types: Array<"mind_map" | "audio" | "slides" | "quiz">
+    types: Array<
+      | "mind_map"
+      | "audio"
+      | "slides"
+      | "quiz"
+      | "video"
+      | "cinematic_video"
+      | "flashcards"
+      | "infographic"
+      | "data_table"
+    >
   ) => Promise<JobRecord | null>;
   onSelectedNotebookId: (notebookId: string) => void;
 }
@@ -212,7 +226,19 @@ export function StudioControls({
 
           <div className="grid grid-cols-1 gap-2">
             <ActionButton
-              onClick={() => void onGenerateArtifacts(["mind_map", "audio", "slides", "quiz"])}
+              onClick={() =>
+                void onGenerateArtifacts([
+                  "mind_map",
+                  "audio",
+                  "slides",
+                  "quiz",
+                  "video",
+                  "cinematic_video",
+                  "flashcards",
+                  "infographic",
+                  "data_table",
+                ])
+              }
               disabled={!notebookId || isLoading}
               icon={<Sparkles className="h-4 w-4" />}
               label="Generate Studio Suite"
@@ -239,6 +265,46 @@ export function StudioControls({
               disabled={!notebookId || isLoading}
               icon={<Presentation className="h-4 w-4" />}
               label="Generate Slides + Quiz"
+              isLoading={false}
+              tone="secondary"
+            />
+            <ActionButton
+              onClick={() => void onGenerateArtifacts(["video"])}
+              disabled={!notebookId || isLoading}
+              icon={<Film className="h-4 w-4" />}
+              label="Generate Video"
+              isLoading={false}
+              tone="secondary"
+            />
+            <ActionButton
+              onClick={() => void onGenerateArtifacts(["cinematic_video"])}
+              disabled={!notebookId || isLoading}
+              icon={<Film className="h-4 w-4" />}
+              label="Generate Cinematic Video"
+              isLoading={false}
+              tone="secondary"
+            />
+            <ActionButton
+              onClick={() => void onGenerateArtifacts(["flashcards"])}
+              disabled={!notebookId || isLoading}
+              icon={<Layers className="h-4 w-4" />}
+              label="Generate Flashcards"
+              isLoading={false}
+              tone="secondary"
+            />
+            <ActionButton
+              onClick={() => void onGenerateArtifacts(["infographic"])}
+              disabled={!notebookId || isLoading}
+              icon={<Image className="h-4 w-4" />}
+              label="Generate Infographic"
+              isLoading={false}
+              tone="secondary"
+            />
+            <ActionButton
+              onClick={() => void onGenerateArtifacts(["data_table"])}
+              disabled={!notebookId || isLoading}
+              icon={<Table2 className="h-4 w-4" />}
+              label="Generate Data Table"
               isLoading={false}
               tone="secondary"
             />

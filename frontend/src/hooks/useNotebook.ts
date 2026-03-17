@@ -22,6 +22,22 @@ export interface QuizData {
   questions: QuizQuestion[];
 }
 
+export interface Flashcard {
+  front?: string;
+  back?: string;
+  f?: string;
+  b?: string;
+}
+
+export interface FlashcardsData {
+  title?: string;
+  cards: Flashcard[];
+}
+
+export interface DataTableData {
+  rows: Array<Record<string, string>>;
+}
+
 export interface TaxonomySubcategory {
   name: string;
   slug: string;
@@ -52,7 +68,16 @@ export interface TaxonomyData {
 export interface ArtifactRecord {
   artifact_id: string;
   notebook_id: string;
-  type: "mind_map" | "audio" | "slides" | "quiz";
+  type:
+    | "mind_map"
+    | "audio"
+    | "slides"
+    | "quiz"
+    | "video"
+    | "cinematic_video"
+    | "flashcards"
+    | "infographic"
+    | "data_table";
   preview: any;
   download_urls: Record<string, string>;
   upstream_artifact_id?: string | null;
@@ -95,11 +120,22 @@ export interface SourceRecord {
   conversation_id?: string | null;
 }
 
+export interface ChatTurn {
+  question: string;
+  answer: string;
+}
+
+export interface ChatState {
+  conversationId: string | null;
+  turns: ChatTurn[];
+}
+
 interface NotebookState {
   notebooks: NotebookRecord[];
   selectedNotebookId: string | null;
   sources: SourceRecord[];
   artifacts: ArtifactRecord[];
+  chat: ChatState;
   currentJob: JobRecord | null;
   isLoading: boolean;
   error: string | null;
@@ -180,6 +216,10 @@ export function useNotebook() {
     selectedNotebookId: null,
     sources: [],
     artifacts: [],
+    chat: {
+      conversationId: null,
+      turns: [],
+    },
     currentJob: null,
     isLoading: false,
     error: null,
@@ -203,6 +243,26 @@ export function useNotebook() {
       isLoading: false,
       error: null,
     }));
+    try {
+      const chatPayload = await apiGet<{ conversation_id: string | null; turns: ChatTurn[] }>(
+        `/notebooks/${notebookId}/chat`,
+      );
+      setState((current) => ({
+        ...current,
+        chat: {
+          conversationId: chatPayload.conversation_id,
+          turns: chatPayload.turns || [],
+        },
+      }));
+    } catch {
+      setState((current) => ({
+        ...current,
+        chat: {
+          conversationId: null,
+          turns: [],
+        },
+      }));
+    }
     return detail;
   }, []);
 
@@ -282,7 +342,19 @@ export function useNotebook() {
   );
 
   const startArtifactJob = useCallback(
-    async (types: Array<"mind_map" | "audio" | "slides" | "quiz">) => {
+    async (
+      types: Array<
+        | "mind_map"
+        | "audio"
+        | "slides"
+        | "quiz"
+        | "video"
+        | "cinematic_video"
+        | "flashcards"
+        | "infographic"
+        | "data_table"
+      >,
+    ) => {
       if (!state.selectedNotebookId) {
         return null;
       }
@@ -340,6 +412,41 @@ export function useNotebook() {
     [loadNotebook, state.artifacts, state.selectedNotebookId],
   );
 
+  const askNotebook = useCallback(
+    async (question: string) => {
+      if (!state.selectedNotebookId || !question.trim()) {
+        return null;
+      }
+      try {
+        const response = await apiPost<{
+          answer: string;
+          conversation_id: string;
+        }>(`/notebooks/${state.selectedNotebookId}/chat`, {
+          question,
+          conversation_id: state.chat.conversationId,
+        });
+        setState((current) => ({
+          ...current,
+          chat: {
+            conversationId: response.conversation_id,
+            turns: [
+              ...current.chat.turns,
+              {
+                question,
+                answer: response.answer,
+              },
+            ],
+          },
+        }));
+        return response;
+      } catch (err) {
+        setError(String(err));
+        return null;
+      }
+    },
+    [state.chat.conversationId, state.selectedNotebookId],
+  );
+
   const selectedNotebook = useMemo(
     () =>
       state.notebooks.find((notebook) => notebook.notebook_id === state.selectedNotebookId) || null,
@@ -362,6 +469,26 @@ export function useNotebook() {
     () => (state.artifacts.find((artifact) => artifact.type === "quiz")?.preview ?? null) as QuizData | null,
     [state.artifacts],
   );
+  const videoUrl = useMemo(() => {
+    const downloadUrls = state.artifacts.find((artifact) => artifact.type === "video")?.download_urls;
+    return withApiBase(downloadUrls?.mp4 ?? null);
+  }, [state.artifacts]);
+  const cinematicVideoUrl = useMemo(() => {
+    const downloadUrls = state.artifacts.find((artifact) => artifact.type === "cinematic_video")?.download_urls;
+    return withApiBase(downloadUrls?.mp4 ?? null);
+  }, [state.artifacts]);
+  const flashcards = useMemo(
+    () => (state.artifacts.find((artifact) => artifact.type === "flashcards")?.preview ?? null) as FlashcardsData | null,
+    [state.artifacts],
+  );
+  const infographicUrl = useMemo(() => {
+    const downloadUrls = state.artifacts.find((artifact) => artifact.type === "infographic")?.download_urls;
+    return withApiBase(downloadUrls?.png ?? null);
+  }, [state.artifacts]);
+  const dataTable = useMemo(
+    () => (state.artifacts.find((artifact) => artifact.type === "data_table")?.preview ?? null) as DataTableData | null,
+    [state.artifacts],
+  );
 
   return {
     ...state,
@@ -370,11 +497,18 @@ export function useNotebook() {
     audioUrl,
     slides,
     quiz,
+    videoUrl,
+    cinematicVideoUrl,
+    flashcards,
+    infographicUrl,
+    dataTable,
+    chat: state.chat,
     setSelectedNotebookId,
     loadNotebook,
     uploadToNotebookLM,
     createDerivedNotebook,
     startArtifactJob,
     reviseSlide,
+    askNotebook,
   };
 }

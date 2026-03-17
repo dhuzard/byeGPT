@@ -26,11 +26,17 @@ from pydantic import BaseModel, Field
 from .auth_manager import is_authenticated, login_and_save
 from .cloud import (
     NotebookUploadError,
+    ask_notebook,
     batch_upload,
+    generate_data_table,
     generate_audio_overview,
+    generate_flashcards,
+    generate_infographic,
+    get_notebook_chat_history,
     generate_mind_map,
     generate_quiz,
     generate_slides,
+    generate_video_overview,
     revise_slide,
 )
 from .jobs import jobs
@@ -110,6 +116,11 @@ class SearchIndexRequest(BaseModel):
 class SearchQueryRequest(BaseModel):
     text: str
     n_results: int = 5
+
+
+class NotebookChatRequest(BaseModel):
+    question: str
+    conversation_id: str | None = None
 
 
 class NotebookSelection(BaseModel):
@@ -360,6 +371,63 @@ async def get_notebook_sources(notebook_id: str) -> dict[str, Any]:
         "sources": _extract_notebook_sources(notebook),
         "source_count": notebook.get("source_count", len(notebook.get("source_paths", []))),
     }
+
+
+@app.get("/notebooks/{notebook_id}/chat", tags=["notebooklm"])
+async def get_notebook_chat(
+    notebook_id: str,
+    conversation_id: str | None = None,
+    limit: int = 20,
+) -> dict[str, Any]:
+    notebook = _get_storage().get_notebook(notebook_id)
+    if notebook is None:
+        raise HTTPException(status_code=404, detail=f"Notebook '{notebook_id}' not found.")
+
+    if _DEMO_MODE:
+        return {
+            "conversation_id": conversation_id or f"demo_chat_{notebook_id}",
+            "turns": [],
+        }
+
+    return await get_notebook_chat_history(
+        notebook_id=notebook_id,
+        conversation_id=conversation_id,
+        cookies_path=_COOKIES_PATH,
+        limit=limit,
+    )
+
+
+@app.post("/notebooks/{notebook_id}/chat", tags=["notebooklm"])
+async def chat_with_notebook(
+    notebook_id: str,
+    body: NotebookChatRequest,
+) -> dict[str, Any]:
+    notebook = _get_storage().get_notebook(notebook_id)
+    if notebook is None:
+        raise HTTPException(status_code=404, detail=f"Notebook '{notebook_id}' not found.")
+
+    if _DEMO_MODE:
+        titles = ", ".join(_extract_notebook_titles(notebook)[:3]) or notebook.get("title", "this notebook")
+        return {
+            "answer": (
+                f"Demo mode answer for '{body.question}'. "
+                f"This notebook currently focuses on: {titles}."
+            ),
+            "conversation_id": body.conversation_id or f"demo_chat_{notebook_id}",
+            "turn_number": 1,
+            "is_follow_up": bool(body.conversation_id),
+            "references": [],
+        }
+
+    if not is_authenticated(_COOKIES_PATH):
+        raise HTTPException(status_code=401, detail="Not authenticated.")
+
+    return await ask_notebook(
+        notebook_id=notebook_id,
+        question=body.question,
+        conversation_id=body.conversation_id,
+        cookies_path=_COOKIES_PATH,
+    )
 
 
 @app.post("/notebooks/derived", tags=["notebooklm"])
@@ -778,6 +846,103 @@ async def _generate_and_store_artifact(notebook_id: str, artifact_type: str) -> 
         )
         return metadata
 
+    if artifact_type == "video":
+        result = await generate_video_overview(notebook_id=notebook_id, cookies_path=_COOKIES_PATH)
+        metadata = storage.create_artifact(
+            notebook_id=notebook_id,
+            artifact_type="video",
+            upstream_artifact_id=result["artifact_id"],
+        )
+        storage.add_artifact_file(
+            metadata["artifact_id"],
+            "mp4",
+            content=result["bytes"],
+            filename="video.mp4",
+            preview={"kind": "video"},
+        )
+        return metadata
+
+    if artifact_type == "cinematic_video":
+        result = await generate_video_overview(
+            notebook_id=notebook_id,
+            cookies_path=_COOKIES_PATH,
+            cinematic=True,
+        )
+        metadata = storage.create_artifact(
+            notebook_id=notebook_id,
+            artifact_type="cinematic_video",
+            upstream_artifact_id=result["artifact_id"],
+        )
+        storage.add_artifact_file(
+            metadata["artifact_id"],
+            "mp4",
+            content=result["bytes"],
+            filename="cinematic_video.mp4",
+            preview={"kind": "cinematic_video"},
+        )
+        return metadata
+
+    if artifact_type == "flashcards":
+        result = await generate_flashcards(notebook_id=notebook_id, cookies_path=_COOKIES_PATH)
+        metadata = storage.create_artifact(
+            notebook_id=notebook_id,
+            artifact_type="flashcards",
+            upstream_artifact_id=result["artifact_id"],
+        )
+        storage.add_artifact_file(
+            metadata["artifact_id"],
+            "json",
+            content=json.dumps(result["flashcards"], indent=2),
+            filename="flashcards.json",
+            preview=result["flashcards"],
+        )
+        storage.add_artifact_file(
+            metadata["artifact_id"],
+            "md",
+            content=result["markdown"],
+            filename="flashcards.md",
+        )
+        return metadata
+
+    if artifact_type == "infographic":
+        result = await generate_infographic(notebook_id=notebook_id, cookies_path=_COOKIES_PATH)
+        metadata = storage.create_artifact(
+            notebook_id=notebook_id,
+            artifact_type="infographic",
+            upstream_artifact_id=result["artifact_id"],
+        )
+        storage.add_artifact_file(
+            metadata["artifact_id"],
+            "png",
+            content=result["bytes"],
+            filename="infographic.png",
+            preview={"kind": "infographic"},
+        )
+        return metadata
+
+    if artifact_type == "data_table":
+        result = await generate_data_table(notebook_id=notebook_id, cookies_path=_COOKIES_PATH)
+        metadata = storage.create_artifact(
+            notebook_id=notebook_id,
+            artifact_type="data_table",
+            upstream_artifact_id=result["artifact_id"],
+        )
+        rows = _parse_csv_rows(result["csv"])
+        storage.add_artifact_file(
+            metadata["artifact_id"],
+            "csv",
+            content=result["csv"],
+            filename="data_table.csv",
+            preview={"rows": rows},
+        )
+        storage.add_artifact_file(
+            metadata["artifact_id"],
+            "md",
+            content=build_markdown_table(rows),
+            filename="data_table.md",
+        )
+        return metadata
+
     raise HTTPException(status_code=400, detail=f"Unsupported artifact type '{artifact_type}'.")
 
 
@@ -880,11 +1045,99 @@ async def _generate_demo_artifact(notebook_id: str, artifact_type: str) -> dict[
         )
         return metadata
 
+    if artifact_type == "video":
+        metadata = storage.create_artifact(notebook_id=notebook_id, artifact_type="video")
+        storage.add_artifact_file(
+            metadata["artifact_id"],
+            "mp4",
+            content=_build_demo_wav(),
+            filename="video.mp4",
+            preview={"kind": "video"},
+        )
+        return metadata
+
+    if artifact_type == "cinematic_video":
+        metadata = storage.create_artifact(notebook_id=notebook_id, artifact_type="cinematic_video")
+        storage.add_artifact_file(
+            metadata["artifact_id"],
+            "mp4",
+            content=_build_demo_wav(),
+            filename="cinematic_video.mp4",
+            preview={"kind": "cinematic_video"},
+        )
+        return metadata
+
+    if artifact_type == "flashcards":
+        cards = {
+            "title": "Archive Flashcards",
+            "cards": [
+                {"front": f"Theme {index}", "back": title}
+                for index, title in enumerate(titles[:5], start=1)
+            ],
+        }
+        metadata = storage.create_artifact(notebook_id=notebook_id, artifact_type="flashcards")
+        storage.add_artifact_file(
+            metadata["artifact_id"],
+            "json",
+            content=json.dumps(cards, indent=2),
+            filename="flashcards.json",
+            preview=cards,
+        )
+        storage.add_artifact_file(
+            metadata["artifact_id"],
+            "md",
+            content=_render_flashcards_markdown(cards),
+            filename="flashcards.md",
+        )
+        return metadata
+
+    if artifact_type == "infographic":
+        metadata = storage.create_artifact(notebook_id=notebook_id, artifact_type="infographic")
+        storage.add_artifact_file(
+            metadata["artifact_id"],
+            "png",
+            content=_build_demo_png(),
+            filename="infographic.png",
+            preview={"kind": "infographic"},
+        )
+        return metadata
+
+    if artifact_type == "data_table":
+        rows = [
+            {"Topic": title, "Summary": f"Demo comparison row for {title}"}
+            for title in titles[:5]
+        ] or [{"Topic": "Demo", "Summary": "Add more sources to create a richer table."}]
+        metadata = storage.create_artifact(notebook_id=notebook_id, artifact_type="data_table")
+        storage.add_artifact_file(
+            metadata["artifact_id"],
+            "csv",
+            content=build_csv(rows),
+            filename="data_table.csv",
+            preview={"rows": rows},
+        )
+        storage.add_artifact_file(
+            metadata["artifact_id"],
+            "md",
+            content=build_markdown_table(rows),
+            filename="data_table.md",
+        )
+        return metadata
+
     raise HTTPException(status_code=400, detail=f"Unsupported artifact type '{artifact_type}'.")
 
 
 def _normalize_artifact_types(types: list[str]) -> list[str]:
-    allowed = {"mind_map", "audio", "slides", "quiz"}
+    allowed = {
+        "mind_map",
+        "audio",
+        "slides",
+        "quiz",
+        "video",
+        "cinematic_video",
+        "flashcards",
+        "infographic",
+        "data_table",
+    }
     normalized: list[str] = []
     for artifact_type in types:
         if artifact_type not in allowed:
@@ -916,6 +1169,34 @@ def _render_quiz_markdown(quiz: dict[str, Any]) -> str:
             lines.append(f"Answer: {answer}")
             lines.append("")
     return "\n".join(lines).strip() + "\n"
+
+
+def _render_flashcards_markdown(flashcards: dict[str, Any]) -> str:
+    lines = [f"# {flashcards.get('title', 'Flashcards')}", ""]
+    for index, card in enumerate(flashcards.get("cards", []), start=1):
+        front = card.get("front") or card.get("f") or ""
+        back = card.get("back") or card.get("b") or ""
+        lines.extend(
+            [
+                f"## Card {index}",
+                "",
+                f"Q: {front}",
+                "",
+                f"A: {back}",
+                "",
+            ]
+        )
+    return "\n".join(lines).strip() + "\n"
+
+
+def _parse_csv_rows(csv_text: str) -> list[dict[str, Any]]:
+    lines = [line for line in csv_text.splitlines() if line.strip()]
+    if not lines:
+        return []
+    import csv
+
+    reader = csv.DictReader(lines)
+    return [dict(row) for row in reader]
 
 
 def _maybe_add_pptx_export(storage: StorageManager, artifact_id: str, slides: list[dict[str, Any]]) -> None:
@@ -1134,6 +1415,12 @@ def _build_demo_wav() -> bytes:
             frames.extend(int(amplitude).to_bytes(2, byteorder="little", signed=True))
         wav_file.writeframes(bytes(frames))
     return buffer.getvalue()
+
+
+def _build_demo_png() -> bytes:
+    return base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9q24sAAAAASUVORK5CYII="
+    )
 
 
 def _load_tus_upload_info(upload_id: str) -> TusUploadInfo:
