@@ -1,0 +1,125 @@
+{
+  "name": "byeGPT Studio",
+  "description": "Query your personal ChatGPT knowledge archive via the byeGPT PowerApp API. Lets Claude or Codex interact with your NotebookLM notebooks, search your conversation history, and retrieve AI-generated artifacts.",
+  "version": "3.0.0",
+  "base_url": "http://localhost:8000",
+  "auth": {
+    "type": "none"
+  },
+  "endpoints": [
+    {
+      "name": "health",
+      "method": "GET",
+      "path": "/health",
+      "description": "Check whether the byeGPT backend is running."
+    },
+    {
+      "name": "auth_status",
+      "method": "GET",
+      "path": "/auth/status",
+      "description": "Check if the user is authenticated with Google / NotebookLM."
+    },
+    {
+      "name": "auth_login",
+      "method": "POST",
+      "path": "/auth/login",
+      "description": "Start a headless Playwright browser so the user can complete Google OAuth. Poll /auth/status to confirm completion."
+    },
+    {
+      "name": "convert_export",
+      "method": "POST",
+      "path": "/convert",
+      "description": "Convert a ChatGPT .zip or conversations.json export to Gemini-optimised Markdown files with NotebookLM Context Anchors.",
+      "parameters": {
+        "file": { "type": "file", "description": "The ChatGPT export (.zip or .json)." },
+        "max_size_mb": { "type": "number", "default": 7, "description": "Max output file size in MB." },
+        "include_thinking": { "type": "boolean", "default": true },
+        "include_attachments": { "type": "boolean", "default": true }
+      }
+    },
+    {
+      "name": "generate_passport",
+      "method": "POST",
+      "path": "/persona",
+      "description": "Generate a Digital Passport (AI communication profile) from a ChatGPT export.",
+      "parameters": {
+        "file": { "type": "file", "description": "The ChatGPT export (.zip or .json)." }
+      }
+    },
+    {
+      "name": "upload_to_notebooklm",
+      "method": "POST",
+      "path": "/notebooks/upload",
+      "description": "Batch-upload converted Markdown files to NotebookLM (up to 50 sources per notebook).",
+      "parameters": {
+        "notebook_title": { "type": "string", "default": "byeGPT Archive" },
+        "output_dir": { "type": "string", "description": "Path to the folder containing Markdown files." }
+      }
+    },
+    {
+      "name": "get_mind_map",
+      "method": "GET",
+      "path": "/notebooks/{notebook_id}/mindmap",
+      "description": "Generate and return a JSON mind map for the specified NotebookLM notebook.",
+      "parameters": {
+        "notebook_id": { "type": "string", "in": "path" }
+      }
+    },
+    {
+      "name": "get_audio_overview",
+      "method": "GET",
+      "path": "/notebooks/{notebook_id}/audio",
+      "description": "Generate and stream an Audio Overview MP3 for the specified notebook.",
+      "parameters": {
+        "notebook_id": { "type": "string", "in": "path" }
+      }
+    },
+    {
+      "name": "get_slides",
+      "method": "GET",
+      "path": "/notebooks/{notebook_id}/slides",
+      "description": "Generate and return a list of presentation slides for the specified notebook.",
+      "parameters": {
+        "notebook_id": { "type": "string", "in": "path" }
+      }
+    },
+    {
+      "name": "revise_slide",
+      "method": "PATCH",
+      "path": "/notebooks/{notebook_id}/slides/{slide_index}",
+      "description": "Send a revision prompt for a specific slide and receive the updated slide.",
+      "parameters": {
+        "notebook_id": { "type": "string", "in": "path" },
+        "slide_index": { "type": "integer", "in": "path" },
+        "revision_prompt": { "type": "string" },
+        "artifact_id": { "type": "string" }
+      }
+    }
+  ],
+  "examples": [
+    {
+      "description": "Ask my archive about a recipe saved in 2023",
+      "steps": [
+        { "call": "auth_status" },
+        {
+          "call": "get_mind_map",
+          "parameters": { "notebook_id": "<your-notebook-id>" },
+          "note": "Inspect mind map for food/recipe nodes"
+        }
+      ]
+    },
+    {
+      "description": "Convert my ChatGPT export and upload to NotebookLM",
+      "steps": [
+        { "call": "convert_export", "parameters": { "file": "~/Downloads/export.zip" } },
+        {
+          "call": "upload_to_notebooklm",
+          "parameters": {
+            "notebook_title": "My 2024 Archive",
+            "output_dir": "<output_dir from previous step>"
+          }
+        }
+      ]
+    }
+  ]
+}

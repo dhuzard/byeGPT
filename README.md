@@ -1,11 +1,12 @@
-# 🚀 byeGPT
+# 🚀 byeGPT Studio
 
 > **Migrate your entire ChatGPT history to Gemini-optimized Markdown — in seconds.**
-> *Plus: transform it into a searchable, intelligent knowledge base optimized for NotebookLM, Obsidian, and Local RAG.*
+> *Now with a full-stack React dashboard, FastAPI backend, and direct NotebookLM integration.*
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/damie/byegpt/actions/workflows/ci.yml/badge.svg)](https://github.com/damie/byegpt/actions)
+[![Docker](https://img.shields.io/badge/docker-compose-blue.svg)](docker-compose.yml)
 
 ---
 
@@ -259,7 +260,105 @@ MIT — see [LICENSE](LICENSE) for details.
 
 ---
 
+## 🏗️ v3 Studio — Full-stack PowerApp
+
+byeGPT v3 "Studio" Edition is a full-stack application with:
+
+- A **React + Tailwind + Vite** dashboard (the "Studio")
+- A **FastAPI + Playwright** backend (the "Orchestrator")
+- Direct **NotebookLM** integration via `notebooklm-py`
+- A **`skill.json`** for Claude / Codex agent integration
+
+### 📂 Repository Structure
+
+```
+byegpt/
+├── .byegpt/                # Local cache & session storage
+├── assets/                 # Extracted images from ChatGPT
+├── backend/                # FastAPI & NotebookLM integration
+│   ├── app/
+│   │   ├── main.py         # Entry point & API routes
+│   │   ├── cloud.py        # notebooklm-py wrapper logic
+│   │   ├── parser.py       # Context-anchor Markdown conversion
+│   │   └── auth_manager.py # Playwright session & cookie handler
+│   ├── requirements.txt
+│   └── Dockerfile          # With Playwright/Chromium deps
+├── frontend/               # React + Tailwind + Vite
+│   ├── src/
+│   │   ├── components/     # IngestionDropzone, ChatGallery, StudioControls,
+│   │   │                   # PassportCard, MindMap, ArtifactGallery
+│   │   ├── hooks/          # useNotebook (API polling)
+│   │   └── App.tsx
+│   ├── package.json
+│   └── tailwind.config.js
+├── core/                   # Shared CLI logic (used by backend)
+│   ├── converter.py
+│   └── persona.py
+├── skill.json              # Claude / Codex agent integration
+├── docker-compose.yml      # Orchestrates Backend + Frontend
+└── README.md
+```
+
+### 🚀 Quick Start (Docker)
+
+```bash
+# Clone and start everything
+git clone https://github.com/damie/byegpt.git
+cd byegpt
+docker compose up --build
+
+# Frontend: http://localhost:5173
+# Backend API docs: http://localhost:8000/docs
+```
+
+### 🛠️ Local Development
+
+**Backend:**
+```bash
+cd backend
+pip install -r requirements.txt
+playwright install chromium
+uvicorn app.main:app --reload
+```
+
+**Frontend:**
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### 🤖 Agent Integration (`skill.json`)
+
+The included `skill.json` lets Claude Code or Codex talk directly to your byeGPT PowerApp:
+
+```
+"Claude, ask my byeGPT archive about that recipe I saved in 2023."
+```
+
+Load the skill in Claude Code:
+```bash
+claude skill add ./skill.json
+```
+
+### 🗺️ Backend API Routes
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Liveness probe |
+| `GET` | `/auth/status` | Check if Google session exists |
+| `POST` | `/auth/login` | Start headless Google login |
+| `POST` | `/convert` | Convert ChatGPT export → Markdown |
+| `POST` | `/persona` | Generate Digital Passport |
+| `POST` | `/notebooks/upload` | Batch-upload to NotebookLM |
+| `GET` | `/notebooks/{id}/mindmap` | Generate mind-map JSON |
+| `GET` | `/notebooks/{id}/audio` | Generate Audio Overview MP3 |
+| `GET` | `/notebooks/{id}/slides` | Generate slides |
+| `PATCH` | `/notebooks/{id}/slides/{i}` | Revise a slide with a prompt |
+
+---
+
 <p align="center">
   Made with ❤️ for everyone building a personal AI knowledge base<br/>
-  <sub>byeGPT v2.0.0</sub>
+  <sub>byeGPT v3.0.0 "Studio"</sub>
 </p>
