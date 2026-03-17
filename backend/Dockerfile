@@ -24,7 +24,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Chromium for Playwright
-RUN playwright install chromium
+RUN pip install playwright && playwright install chromium
 
 # Copy the byeGPT source so the core/converter and src/byegpt packages are available
 # Note: build context is the repo root (set in docker-compose.yml)
