@@ -8,15 +8,56 @@ import json
 import logging
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
 _MAX_SOURCES = 50
+_MAX_TEXT_SOURCE_CHARS = 500_000
+T = TypeVar("T")
 
 
-def _chunk_paths(paths: list[Path], chunk_size: int = _MAX_SOURCES) -> list[list[Path]]:
-    return [paths[index : index + chunk_size] for index in range(0, len(paths), chunk_size)]
+def _chunk_items(items: list[T], chunk_size: int = _MAX_SOURCES) -> list[list[T]]:
+    return [items[index : index + chunk_size] for index in range(0, len(items), chunk_size)]
+
+
+def _split_markdown_text(content: str, max_chars: int = _MAX_TEXT_SOURCE_CHARS) -> list[str]:
+    if len(content) <= max_chars:
+        return [content]
+
+    parts: list[str] = []
+    remaining = content
+    while remaining:
+        if len(remaining) <= max_chars:
+            parts.append(remaining)
+            break
+
+        split_at = remaining.rfind("\n\n", 0, max_chars)
+        if split_at < max_chars // 2:
+            split_at = remaining.rfind("\n", 0, max_chars)
+        if split_at < max_chars // 2:
+            split_at = max_chars
+
+        part = remaining[:split_at].strip()
+        if part:
+            parts.append(part)
+        remaining = remaining[split_at:].lstrip()
+
+    return parts
+
+
+def _prepare_text_sources(markdown_files: list[Path]) -> list[tuple[str, str]]:
+    sources: list[tuple[str, str]] = []
+    for path in markdown_files:
+        title_base = path.stem.replace("_", " ").strip() or path.name
+        markdown = path.read_text(encoding="utf-8", errors="replace")
+        parts = _split_markdown_text(markdown)
+
+        for index, part in enumerate(parts, start=1):
+            title = title_base if len(parts) == 1 else f"{title_base} ({index}/{len(parts)})"
+            sources.append((title[:200], part))
+
+    return sources
 
 
 async def _get_client(cookies_path: Path):
@@ -36,7 +77,8 @@ async def batch_upload(
     cookies_path: Path,
 ) -> list[str]:
     notebook_ids: list[str] = []
-    chunks = _chunk_paths(markdown_files)
+    text_sources = _prepare_text_sources(markdown_files)
+    chunks = _chunk_items(text_sources)
 
     client = await _get_client(cookies_path)
     async with client:
@@ -45,8 +87,13 @@ async def batch_upload(
             logger.info("Creating notebook '%s' with %d sources", title, len(chunk))
             notebook = await client.notebooks.create(title)
 
-            for path in chunk:
-                await client.sources.add_file(notebook.id, path, wait=True)
+            for source_title, markdown in chunk:
+                await client.sources.add_text(
+                    notebook.id,
+                    title=source_title,
+                    content=markdown,
+                    wait=True,
+                )
 
             notebook_ids.append(notebook.id)
             logger.info("Created notebook %s", notebook.id)
