@@ -1,5 +1,5 @@
 """
-Persona module — synthesizes a ChatGPT conversation history into a
+Persona module - synthesizes a ChatGPT conversation history into a
 "Digital Passport" document that captures the user's communication style,
 interests, and patterns for easy onboarding with a new AI assistant.
 """
@@ -10,6 +10,8 @@ import re
 from collections import Counter
 from datetime import datetime
 from typing import Any
+
+from byegpt.taxonomy import build_taxonomy, extract_subtopics, extract_topics
 
 
 def _extract_user_messages(conversations: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -27,86 +29,13 @@ def _extract_user_messages(conversations: list[dict[str, Any]]) -> list[dict[str
             parts = content.get("parts", [])
             text = "".join(p for p in parts if isinstance(p, str)).strip()
             if text:
-                messages.append({
-                    "text": text,
-                    "timestamp": msg.get("create_time"),
-                })
+                messages.append(
+                    {
+                        "text": text,
+                        "timestamp": msg.get("create_time"),
+                    }
+                )
     return messages
-
-
-def extract_topics(conversations: list[dict[str, Any]], top_n: int = 20) -> list[tuple[str, int]]:
-    """Extract top topics from conversation titles using keyword frequency."""
-    # Common stop words to filter out
-    stop_words = frozenset({
-        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
-        "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
-        "have", "has", "had", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "can", "shall", "not", "no", "so", "up",
-        "out", "if", "about", "into", "through", "during", "before", "after",
-        "above", "below", "between", "same", "than", "too", "very", "just",
-        "how", "what", "which", "who", "whom", "this", "that", "these",
-        "those", "i", "me", "my", "we", "our", "you", "your", "it", "its",
-        "le", "la", "les", "de", "du", "des", "un", "une", "et", "en",
-        "pour", "dans", "sur", "avec", "par", "est", "sont", "pas",
-    })
-
-    word_counts: Counter[str] = Counter()
-    for conv in conversations:
-        title = conv.get("title") or ""
-        words = re.findall(r"[a-zA-ZÀ-ÿ]{3,}", title.lower())
-        for word in words:
-            if word not in stop_words:
-                word_counts[word] += 1
-
-    return word_counts.most_common(top_n)
-
-
-def extract_subtopics(
-    conversations: list[dict[str, Any]],
-    topics: list[str],
-    top_n: int = 3,
-) -> dict[str, list[tuple[str, int]]]:
-    """
-    For each topic, filter conversations whose title contains that topic,
-    then extract the top-N most frequent co-occurring keywords as subtopics.
-
-    Returns a dict mapping topic -> [(subtopic_word, count), ...].
-    """
-    stop_words = frozenset({
-        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
-        "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
-        "have", "has", "had", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "can", "shall", "not", "no", "so", "up",
-        "out", "if", "about", "into", "through", "during", "before", "after",
-        "above", "below", "between", "same", "than", "too", "very", "just",
-        "how", "what", "which", "who", "whom", "this", "that", "these",
-        "those", "i", "me", "my", "we", "our", "you", "your", "it", "its",
-        "le", "la", "les", "de", "du", "des", "un", "une", "et", "en",
-        "pour", "dans", "sur", "avec", "par", "est", "sont", "pas",
-    })
-
-    result: dict[str, list[tuple[str, int]]] = {}
-
-    for topic in topics:
-        topic_lower = topic.lower()
-        # Filter conversations that belong to this topic
-        filtered = [
-            c for c in conversations
-            if topic_lower in (c.get("title") or "").lower()
-        ]
-
-        # Count co-occurring keywords (excluding the topic word itself)
-        word_counts: Counter[str] = Counter()
-        for conv in filtered:
-            title = conv.get("title") or ""
-            words = re.findall(r"[a-zA-ZÀ-ÿ]{3,}", title.lower())
-            for word in words:
-                if word not in stop_words and word != topic_lower:
-                    word_counts[word] += 1
-
-        result[topic] = word_counts.most_common(top_n)
-
-    return result
 
 
 def _analyze_activity(conversations: list[dict[str, Any]]) -> list[tuple[str, int]]:
@@ -129,6 +58,7 @@ def _analyze_communication_style(messages: list[dict[str, Any]]) -> dict[str, An
     if not messages:
         return {
             "avg_length": 0,
+            "median_length": 0,
             "question_ratio": 0,
             "total_messages": 0,
         }
@@ -156,126 +86,166 @@ def _get_models_used(conversations: list[dict[str, Any]]) -> list[tuple[str, int
             slug = msg.get("metadata", {}).get("model_slug", "")
             if slug:
                 model_counts[slug] += 1
-                break  # Count once per conversation
+                break
     return model_counts.most_common(10)
 
 
-def generate_persona(conversations: list[dict[str, Any]]) -> str:
+def _build_style_bullets(style: dict[str, Any]) -> list[str]:
+    bullets: list[str] = []
+
+    avg_length = style["avg_length"]
+    question_ratio = style["question_ratio"]
+
+    if avg_length >= 500:
+        bullets.append("Prefers deep, detailed responses with visible reasoning and structure.")
+    elif avg_length >= 180:
+        bullets.append("Prefers concise structure with enough depth to act immediately.")
+    else:
+        bullets.append("Prefers direct responses that get to the point quickly.")
+
+    if question_ratio >= 45:
+        bullets.append("Uses dialogue to explore ideas and benefits from iterative back-and-forth.")
+    elif question_ratio >= 20:
+        bullets.append("Mixes questions with instructions and usually wants practical follow-through.")
+    else:
+        bullets.append("Mostly gives instructions and context rather than open-ended questions.")
+
+    if avg_length >= 250 and question_ratio < 20:
+        bullets.append("Values decisive execution over speculative brainstorming.")
+
+    return bullets
+
+
+def _build_interest_bullets(
+    topics: list[tuple[str, int]],
+    subtopics: dict[str, list[tuple[str, int]]],
+) -> list[str]:
+    bullets: list[str] = []
+    for topic, count in topics[:5]:
+        related = ", ".join(word for word, _ in subtopics.get(topic, [])[:3])
+        if related:
+            bullets.append(f"{topic.title()} ({count} chats) with recurring angles around {related}.")
+        else:
+            bullets.append(f"{topic.title()} ({count} chats).")
+    return bullets
+
+
+def generate_persona(
+    conversations: list[dict[str, Any]],
+    taxonomy: dict[str, Any] | None = None,
+) -> str:
     """
     Generate a Digital Passport document from a ChatGPT conversation history.
-
-    This creates a structured Markdown document that captures the user's
-    communication patterns, interests, and style — designed to be given
-    to a new AI assistant (like Gemini) for instant personalization.
     """
     total_convs = len(conversations)
+    taxonomy = taxonomy or build_taxonomy(conversations)
     user_messages = _extract_user_messages(conversations)
     topics = extract_topics(conversations)
+    top_topic_names = [topic for topic, _ in topics[:5]]
+    subtopics = extract_subtopics(conversations, top_topic_names)
     activity = _analyze_activity(conversations)
     style = _analyze_communication_style(user_messages)
     models = _get_models_used(conversations)
 
-    # Date range
     timestamps = [c.get("create_time") for c in conversations if c.get("create_time")]
     if timestamps:
         first_date = datetime.fromtimestamp(min(timestamps)).strftime("%Y-%m-%d")
         last_date = datetime.fromtimestamp(max(timestamps)).strftime("%Y-%m-%d")
-        date_range = f"{first_date} → {last_date}"
+        date_range = f"{first_date} -> {last_date}"
     else:
         date_range = "Unknown"
 
-    # Build the document
-    lines: list[str] = []
+    style_bullets = _build_style_bullets(style)
+    interest_bullets = _build_interest_bullets(topics, subtopics)
 
+    lines: list[str] = []
     lines.append("---")
-    lines.append('title: "Digital Passport — My AI Profile"')
+    lines.append('title: "Digital Passport - My AI Profile"')
     lines.append(f"generated: {datetime.now().strftime('%Y-%m-%d')}")
     lines.append("tags: [digital-passport, persona, ai-profile]")
     lines.append("---")
     lines.append("")
-    lines.append("# 🛂 Digital Passport — My AI Profile")
+    lines.append("# Digital Passport")
     lines.append("")
-    lines.append("> This document was auto-generated by **byeGPT** from your ChatGPT")
-    lines.append("> conversation history. Give it to a new AI assistant so it can")
-    lines.append("> understand your style and preferences instantly.")
+    lines.append("A compact handoff profile distilled from prior ChatGPT conversations.")
     lines.append("")
-
-    # Profile Summary
-    lines.append("## 📊 Profile Summary")
+    lines.append("## Snapshot")
     lines.append("")
-    lines.append(f"| Metric | Value |")
-    lines.append(f"|---|---|")
+    lines.append("| Metric | Value |")
+    lines.append("|---|---|")
     lines.append(f"| Conversations | {total_convs:,} |")
     lines.append(f"| Messages sent | {style['total_messages']:,} |")
     lines.append(f"| Active period | {date_range} |")
     lines.append(f"| Avg message length | {style['avg_length']:,} characters |")
-    lines.append(f"| Questions ratio | {style['question_ratio']}% of messages |")
+    lines.append(f"| Median message length | {style['median_length']:,} characters |")
+    lines.append(f"| Questions ratio | {style['question_ratio']}% |")
     lines.append("")
 
-    # Models used
     if models:
-        lines.append("## 🤖 Models Used")
+        lines.append("## Models Used")
         lines.append("")
-        for model, count in models:
-            lines.append(f"- **{model}** — {count:,} conversations")
-        lines.append("")
-
-    # Top Topics
-    if topics:
-        lines.append("## 🏷️ Top Topics")
-        lines.append("")
-        lines.append("Your most frequently discussed subjects:")
-        lines.append("")
-        for word, count in topics:
-            bar = "█" * min(count, 30)
-            lines.append(f"- **{word}** ({count}) {bar}")
+        for model, count in models[:5]:
+            lines.append(f"- {model}: {count:,} conversations")
         lines.append("")
 
-    # Activity Timeline
+    lines.append("## Collaboration Style")
+    lines.append("")
+    for bullet in style_bullets:
+        lines.append(f"- {bullet}")
+    lines.append("")
+
+    if interest_bullets:
+        lines.append("## Core Interests")
+        lines.append("")
+        for bullet in interest_bullets:
+            lines.append(f"- {bullet}")
+        lines.append("")
+
     if activity:
-        lines.append("## 📅 Activity Timeline")
+        lines.append("## Activity Timeline")
         lines.append("")
         lines.append("| Month | Conversations |")
         lines.append("|---|---|")
-        for month, count in activity:
-            bar = "▓" * min(count // 2, 25)
-            lines.append(f"| {month} | {count} {bar} |")
+        for month, count in activity[-12:]:
+            lines.append(f"| {month} | {count} |")
         lines.append("")
 
-    # How to Talk to Me
-    lines.append("## 💬 How to Talk to Me")
+    lines.append("## Knowledge Map")
     lines.append("")
-    lines.append("Based on the analysis of your conversation history, here's a")
-    lines.append("primer you can share with a new AI assistant:")
+    for category in taxonomy.get("categories", [])[:5]:
+        subcategory_names = ", ".join(
+            subcategory["name"]
+            for subcategory in category.get("subcategories", [])[:3]
+        )
+        if subcategory_names:
+            lines.append(
+                f"- {category['name']} ({category['count']} chats) with subcategories: {subcategory_names}."
+            )
+        else:
+            lines.append(f"- {category['name']} ({category['count']} chats).")
+    if taxonomy.get("suggested_notebooks"):
+        lines.append("")
+        lines.append("Suggested thematic notebooks:")
+        lines.append("")
+        for suggestion in taxonomy["suggested_notebooks"][:3]:
+            subcategories = ", ".join(suggestion.get("subcategories", [])) or "General"
+            lines.append(f"- {suggestion['title']}: {subcategories}")
+        lines.append("")
+
+    lines.append("## Working Prompt")
     lines.append("")
-    lines.append("> **Communication style:**")
-
-    if style["avg_length"] > 500:
-        lines.append("> I write detailed, thorough messages. I appreciate equally")
-        lines.append("> detailed and comprehensive responses.")
-    elif style["avg_length"] > 150:
-        lines.append("> I write moderate-length messages. I like clear, well-structured")
-        lines.append("> responses with good detail but not excessive verbosity.")
-    else:
-        lines.append("> I tend to be concise and direct. I prefer responses that get")
-        lines.append("> to the point quickly.")
-
-    lines.append(">")
-
-    if style["question_ratio"] > 50:
-        lines.append("> I'm highly inquisitive — I ask a lot of questions and")
-        lines.append("> learn through dialogue.")
-    elif style["question_ratio"] > 25:
-        lines.append("> I balance between asking questions and giving instructions.")
-    else:
-        lines.append("> I tend to give instructions and context rather than asking")
-        lines.append("> open-ended questions.")
-
+    lines.append("Use this profile when assisting this user:")
+    lines.append("")
+    lines.append("- Match their preferred level of detail and bias toward actionable output.")
     if topics:
-        top_5 = ", ".join(w for w, _ in topics[:5])
-        lines.append(">")
-        lines.append(f"> **Key interests:** {top_5}")
-
+        lines.append(
+            f"- Expect recurring interest in: {', '.join(topic.title() for topic, _ in topics[:5])}."
+        )
+    if style["question_ratio"] >= 25:
+        lines.append("- Leave room for iteration and refinement instead of assuming one-shot finality.")
+    else:
+        lines.append("- Default to direct execution and only ask questions when the decision materially changes the result.")
+    lines.append("- Keep structure clear, concrete, and easy to scan.")
     lines.append("")
     lines.append("---")
     lines.append("*Generated by [byeGPT](https://github.com/damie/byegpt)*")
